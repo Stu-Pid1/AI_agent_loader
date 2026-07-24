@@ -1,0 +1,16 @@
+# User-specific settings (contains local paths)
+user_settings.json
+
+# Environment variables
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Editor
+.vscode/
+.idea/
