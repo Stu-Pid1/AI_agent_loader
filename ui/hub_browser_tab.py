@@ -1,7 +1,9 @@
+import time
+
 import gradio as gr
 import pandas as pd
 import logging
-from typing import Optional
+from pathlib import Path
 
 from core.hub_client import HubClient
 from core.cache_manager import CacheManager
@@ -16,6 +18,7 @@ def create_hub_browser_tab(
     hub_client: HubClient,
     cache_manager: CacheManager,
     model_manager: ModelManager,
+    download_queue_state,
 ):
     with gr.Tab("Hub Browser", id="hub_browser"):
         gr.Markdown("## Hugging Face Model Browser")
@@ -62,14 +65,27 @@ def create_hub_browser_tab(
         search_results_state = gr.State([])
         selected_model_state = gr.State(None)
 
-        # --- Results Table ---
-        results_table = gr.Dataframe(
-            headers=["Model ID", "Author", "Task", "Downloads", "Likes", "Library", "Cached"],
-            datatype=["str", "str", "str", "str", "str", "str", "str"],
-            interactive=False,
-            label="Search Results",
-            wrap=True,
-        )
+        # --- Results Layout ---
+        with gr.Row(equal_height=False):
+            with gr.Column(scale=4):
+                results_table = gr.Dataframe(
+                    headers=["Model ID", "Author", "Task", "Downloads", "Likes", "Library", "Cached"],
+                    datatype=["str", "str", "str", "str", "str", "str", "str"],
+                    interactive=False,
+                    label="Search Results",
+                    wrap=True,
+                )
+            with gr.Column(scale=1):
+                quick_download_btn = gr.Button("Quick Download", variant="primary", interactive=False)
+                quick_load_btn = gr.Button("Load & Run", variant="secondary", interactive=False)
+                quick_save_dir = gr.Textbox(
+                    label="Save Folder",
+                    value=str(Settings.DEFAULT_CACHE_DIR),
+                    placeholder=r"e.g. G:\AI",
+                )
+                quick_save_btn = gr.Button("Save Folder")
+                quick_status = gr.Textbox(label="Status", interactive=False, value="")
+                queue_preview = gr.JSON(label="Queued Downloads", value=[])
 
         # --- Model Detail Panel ---
         with gr.Accordion("Model Details", open=False) as detail_accordion:
@@ -97,6 +113,31 @@ def create_hub_browser_tab(
 
             with gr.Accordion("Model Card", open=False):
                 model_card_display = gr.Markdown("*No model selected.*")
+
+        def build_queue_rows(queue_items):
+            return [
+                {
+                    "model_id": item.get("model_id", ""),
+                    "status": item.get("status", "queued"),
+                    "save_path": item.get("save_path", str(Settings.DEFAULT_CACHE_DIR)),
+                }
+                for item in (queue_items or [])
+            ]
+
+        def update_save_dir(path: str):
+            path = (path or "").strip()
+            if not path:
+                return "**Error:** Please enter a directory path.", str(Settings.DEFAULT_CACHE_DIR), []
+            try:
+                new_path = Settings.set_download_dir(path)
+                cache_manager._cache_dir = new_path
+                return (
+                    f"**Saved.** Models will be downloaded to `{new_path}`",
+                    str(new_path),
+                    build_queue_rows(download_queue_state.value),
+                )
+            except Exception as e:
+                return f"**Error:** {e}", str(Settings.DEFAULT_CACHE_DIR), build_queue_rows(download_queue_state.value)
 
         # --- Event Handlers ---
         def do_search(query, task, library, sort, limit):
@@ -146,6 +187,8 @@ def create_hub_browser_tab(
                     gr.update(interactive=False),
                     gr.update(interactive=False),
                     "",
+                    gr.update(interactive=False),
+                    gr.update(interactive=False),
                 )
 
             selected = results[evt.index[0]]
@@ -181,7 +224,6 @@ def create_hub_browser_tab(
                     files_text += f"\n\n**Cached locally** ({format_bytes(cached_size)})"
 
                 card = hub_client.get_model_card(model_id)
-
                 status_text = "Already downloaded" if is_cached else "Ready to download"
 
                 return (
@@ -192,6 +234,8 @@ def create_hub_browser_tab(
                     gr.update(interactive=True),
                     gr.update(interactive=is_cached),
                     status_text,
+                    gr.update(interactive=True),
+                    gr.update(interactive=is_cached),
                 )
 
             except Exception as e:
@@ -204,37 +248,93 @@ def create_hub_browser_tab(
                     gr.update(interactive=False),
                     gr.update(interactive=False),
                     f"Error: {e}",
+                    gr.update(interactive=False),
+                    gr.update(interactive=False),
                 )
 
-        def do_download(model_id, progress: gr.Progress = gr.Progress(track_tqdm=True)):
+        def do_download(model_id, queue_items, save_path, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_id:
-                return "No model selected.", gr.update(interactive=False)
+                return "No model selected.", "", gr.update(interactive=False), queue_items
+
+            target_dir = (save_path or "").strip() or str(Settings.DEFAULT_CACHE_DIR)
+            queue = list(queue_items or [])
+            item_found = False
+            for item in queue:
+                if item.get("model_id") == model_id:
+                    item["status"] = "downloading"
+                    item["save_path"] = target_dir
+                    item["started_at"] = time.time()
+                    item["total_bytes"] = hub_client.get_model_detail(model_id).total_size_bytes or 0
+                    item_found = True
+                    break
+            if not item_found:
+                queue.append({
+                    "model_id": model_id,
+                    "status": "downloading",
+                    "save_path": target_dir,
+                    "started_at": time.time(),
+                    "total_bytes": (hub_client.get_model_detail(model_id).total_size_bytes or 0),
+                    "progress": 0,
+                    "eta_seconds": 0,
+                    "remaining_bytes": 0,
+                })
+
+            yield (
+                f"Queued {model_id}...",
+                f"Queued {model_id} to {target_dir}.",
+                gr.update(interactive=False),
+                queue,
+            )
 
             try:
-                yield f"Downloading {model_id}...", gr.update(interactive=False)
-                hub_client.download_model(model_id)
+                progress(5, desc=f"Downloading {model_id}...")
+                new_path = Settings.set_download_dir(target_dir)
+                cache_manager._cache_dir = Path(new_path)
+                hub_client.download_model(model_id, cache_dir=str(new_path))
+                for item in queue:
+                    if item.get("model_id") == model_id:
+                        item["status"] = "completed"
+                        item["save_path"] = str(new_path)
+                        item["progress"] = 100
+                        item["eta_seconds"] = 0
+                        item["remaining_bytes"] = 0
+                        break
                 yield (
                     f"Downloaded {model_id} successfully!",
+                    f"Downloaded {model_id} to {new_path}.",
                     gr.update(interactive=True),
+                    queue,
                 )
             except Exception as e:
-                yield f"Download failed: {e}", gr.update(interactive=False)
+                for item in queue:
+                    if item.get("model_id") == model_id:
+                        item["status"] = "failed"
+                        item["progress"] = item.get("progress", 0)
+                        item["eta_seconds"] = 0
+                        item["remaining_bytes"] = item.get("remaining_bytes", 0)
+                        break
+                yield (
+                    f"Download failed: {e}",
+                    f"Download failed: {e}",
+                    gr.update(interactive=False),
+                    queue,
+                )
 
         def do_load_and_run(model_id, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_id:
-                return "No model selected."
+                return "No model selected.", ""
 
             try:
                 progress(0, desc=f"Loading {model_id}...")
                 detail = hub_client.get_model_detail(model_id)
                 tag = detail.pipeline_tag
                 if not tag:
-                    return f"Cannot determine task type for {model_id}."
+                    return f"Cannot determine task type for {model_id}.", ""
 
                 model_manager.load_model(model_id, tag)
-                return f"Loaded {model_id} — switch to the appropriate runner tab."
+                return f"Loaded {model_id} — switch to the appropriate runner tab.", ""
             except Exception as e:
-                return f"Load failed: {e}"
+                return f"Load failed: {e}", ""
 
         # --- Wire Events ---
         search_btn.click(
@@ -260,19 +360,41 @@ def create_hub_browser_tab(
                 download_btn,
                 load_btn,
                 download_status,
+                quick_download_btn,
+                quick_load_btn,
             ],
         )
 
         download_btn.click(
             fn=do_download,
-            inputs=[selected_model_state],
-            outputs=[download_status, load_btn],
+            inputs=[selected_model_state, download_queue_state, quick_save_dir],
+            outputs=[download_status, quick_status, load_btn, download_queue_state],
             concurrency_id="model_ops",
+        )
+
+        quick_download_btn.click(
+            fn=do_download,
+            inputs=[selected_model_state, download_queue_state, quick_save_dir],
+            outputs=[quick_status, download_status, load_btn, download_queue_state],
+            concurrency_id="model_ops",
+        )
+
+        quick_save_btn.click(
+            fn=update_save_dir,
+            inputs=[quick_save_dir],
+            outputs=[quick_status, quick_save_dir, queue_preview],
         )
 
         load_btn.click(
             fn=do_load_and_run,
             inputs=[selected_model_state],
-            outputs=[download_status],
+            outputs=[download_status, quick_status],
+            concurrency_id="model_ops",
+        )
+
+        quick_load_btn.click(
+            fn=do_load_and_run,
+            inputs=[selected_model_state],
+            outputs=[quick_status, download_status],
             concurrency_id="model_ops",
         )

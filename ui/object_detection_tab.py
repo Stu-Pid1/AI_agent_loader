@@ -4,7 +4,8 @@ from PIL import Image, ImageDraw, ImageFont
 
 from core.model_manager import ModelManager
 from core.cache_manager import CacheManager
-from ui.components import update_model_status
+from core.hub_client import HubClient
+from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
 
 logger = logging.getLogger("ai_agent_loader.ui.object_detection")
 
@@ -40,6 +41,7 @@ def draw_detections(image_path: str, detections: list) -> Image.Image:
 def create_object_detection_tab(
     model_manager: ModelManager,
     cache_manager: CacheManager,
+    hub_client: HubClient,
 ):
     with gr.Tab("Object Detection", id="object_detection"):
         gr.Markdown("## Object Detection")
@@ -77,11 +79,17 @@ def create_object_detection_tab(
         # --- Event Handlers ---
         def refresh_models():
             cached = cache_manager.get_cached_model_ids()
-            return gr.update(choices=cached, value=None)
+            choices = build_compatible_dropdown_choices(cached, {"object-detection"}, cache_manager)
+            return gr.update(choices=choices, value=None)
 
         def load_model(model_id, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_id:
                 return "**Status:** No model selected."
+            if not is_model_compatible(model_id, {"object-detection"}, cache_manager):
+                return (
+                    "**Status:** This model is not compatible with the Object Detection tab "
+                    "(marked with ❌)."
+                )
             try:
                 progress(0, desc=f"Loading {model_id}...")
                 model_manager.load_model(model_id, "object-detection")

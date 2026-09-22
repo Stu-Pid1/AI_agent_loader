@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 import torch
 from transformers import pipeline as hf_pipeline, AutoTokenizer
 
+from config.settings import Settings
 from runners.base import BaseRunner, RunnerInfo, RunnerStatus, RunResult
 from utils.errors import ModelLoadError, VRAMError, ModelNotLoadedError, InferenceError
 
@@ -16,21 +17,30 @@ class TextGenerationRunner(BaseRunner):
     @staticmethod
     def get_info() -> RunnerInfo:
         return RunnerInfo(
-            name="Text Generation",
-            supported_pipeline_tags=["text-generation", "text2text-generation"],
+            name="Text Generation / Multimodal",
+            supported_pipeline_tags=[
+                "text-generation",
+                "text2text-generation",
+                "image-text-to-text",
+                "video-text-to-text",
+                "audio-text-to-text",
+                "document-question-answering",
+                "visual-question-answering",
+                "image-to-text",
+            ],
             supported_libraries=["transformers"],
-            description="Generate text using large language models (LLMs). "
-            "Supports chat and completion modes.",
-            input_description="Text prompt or chat messages",
-            output_description="Generated text continuation or response",
+            description="Generate text using LLMs and multimodal models, including Gemma and other any-to-any Vision/Audio models.",
+            input_description="Text prompt, chat messages, or multimodal input",
+            output_description="Generated text response",
         )
 
     def load(self, model_id: str, **kwargs) -> None:
         self._status = RunnerStatus.LOADING
         try:
+            task = kwargs.get("task", "text-generation")
             dtype = torch.float16 if self._device == "cuda" else torch.float32
             self._pipeline = hf_pipeline(
-                "text-generation",
+                task,
                 model=model_id,
                 device_map="auto",
                 torch_dtype=dtype,
@@ -95,19 +105,35 @@ class TextGenerationRunner(BaseRunner):
 
             elapsed = time.time() - start_time
 
-            generated_text = result[0]["generated_text"]
+            generated_text = None
+            if isinstance(result, list) and result and isinstance(result[0], dict):
+                generated_text = (
+                    result[0].get("generated_text")
+                    or result[0].get("answer")
+                    or result[0].get("text")
+                )
+            elif isinstance(result, dict):
+                generated_text = (
+                    result.get("generated_text")
+                    or result.get("answer")
+                    or result.get("text")
+                )
+
             if isinstance(generated_text, list):
                 # Chat format: extract last assistant message
                 generated_text = generated_text[-1].get("content", str(generated_text[-1]))
-            elif isinstance(generated_text, str) and prompt:
-                # Strip the input prompt from the output
+            elif isinstance(generated_text, str) and prompt and not isinstance(prompt, (list, dict)):
+                # Strip the input prompt from the output when the model echoes it back
                 if generated_text.startswith(prompt):
                     generated_text = generated_text[len(prompt):]
+
+            if generated_text is None:
+                generated_text = str(result)
 
             self._status = RunnerStatus.READY
             return RunResult(
                 success=True,
-                output=generated_text.strip(),
+                output=str(generated_text).strip(),
                 metadata={
                     "duration_seconds": round(elapsed, 2),
                     "model_id": self._model_id,
@@ -141,6 +167,15 @@ class TextGenerationRunner(BaseRunner):
 
             info = model_info(model_id)
             tag = getattr(info, "pipeline_tag", None)
-            return tag in ("text-generation", "text2text-generation")
+            return tag in (
+                "text-generation",
+                "text2text-generation",
+                "image-text-to-text",
+                "video-text-to-text",
+                "audio-text-to-text",
+                "document-question-answering",
+                "visual-question-answering",
+                "image-to-text",
+            )
         except Exception:
             return False

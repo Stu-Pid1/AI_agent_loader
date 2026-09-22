@@ -5,7 +5,7 @@ import logging
 from core.model_manager import ModelManager
 from core.cache_manager import CacheManager
 from core.hub_client import HubClient
-from ui.components import update_model_status
+from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
 
 logger = logging.getLogger("ai_agent_loader.ui.classification")
 
@@ -87,11 +87,20 @@ def create_classification_tab(
         # --- Shared Handlers ---
         def refresh_models():
             cached = cache_manager.get_cached_model_ids()
-            return gr.update(choices=cached, value=None)
+            text_choices = build_compatible_dropdown_choices(cached, {"text-classification"}, cache_manager)
+            img_choices = build_compatible_dropdown_choices(cached, {"image-classification"}, cache_manager)
+            ner_choices = build_compatible_dropdown_choices(cached, {"token-classification", "named-entity-recognition"}, cache_manager)
+            return (
+                gr.update(choices=text_choices, value=None),
+                gr.update(choices=img_choices, value=None),
+                gr.update(choices=ner_choices, value=None),
+            )
 
         def load_text_model(model_id, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_id:
                 return "**Status:** No model selected."
+            if not is_model_compatible(model_id, {"text-classification"}, cache_manager):
+                return "**Status:** This model is not compatible with the Text Classification tab (marked with ❌)."
             try:
                 progress(0, desc=f"Loading {model_id}...")
                 model_manager.load_model(model_id, "text-classification")
@@ -102,6 +111,8 @@ def create_classification_tab(
         def load_img_model(model_id, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_id:
                 return "**Status:** No model selected."
+            if not is_model_compatible(model_id, {"image-classification"}, cache_manager):
+                return "**Status:** This model is not compatible with the Image Classification tab (marked with ❌)."
             try:
                 progress(0, desc=f"Loading {model_id}...")
                 model_manager.load_model(model_id, "image-classification")
@@ -112,6 +123,8 @@ def create_classification_tab(
         def load_ner_model(model_id, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_id:
                 return "**Status:** No model selected."
+            if not is_model_compatible(model_id, {"token-classification", "named-entity-recognition"}, cache_manager):
+                return "**Status:** This model is not compatible with the Named Entity Recognition tab (marked with ❌)."
             try:
                 progress(0, desc=f"Loading {model_id}...")
                 model_manager.load_model(model_id, "token-classification")
@@ -160,17 +173,17 @@ def create_classification_tab(
             return None, f"Error: {result.error}"
 
         # --- Wire Events ---
-        text_refresh_btn.click(fn=refresh_models, outputs=[text_model_selector])
+        text_refresh_btn.click(fn=refresh_models, outputs=[text_model_selector, img_model_selector, ner_model_selector])
         text_load_btn.click(fn=load_text_model, inputs=[text_model_selector], outputs=[text_status], concurrency_id="model_ops")
         text_unload_btn.click(fn=unload, outputs=[text_status], concurrency_id="model_ops")
         text_classify_btn.click(fn=classify_text, inputs=[text_input], outputs=[text_output, text_meta], concurrency_id="model_ops")
 
-        img_refresh_btn.click(fn=refresh_models, outputs=[img_model_selector])
+        img_refresh_btn.click(fn=refresh_models, outputs=[text_model_selector, img_model_selector, ner_model_selector])
         img_load_btn.click(fn=load_img_model, inputs=[img_model_selector], outputs=[img_status], concurrency_id="model_ops")
         img_unload_btn.click(fn=unload, outputs=[img_status], concurrency_id="model_ops")
         img_classify_btn.click(fn=classify_image, inputs=[img_input], outputs=[img_output, img_meta], concurrency_id="model_ops")
 
-        ner_refresh_btn.click(fn=refresh_models, outputs=[ner_model_selector])
+        ner_refresh_btn.click(fn=refresh_models, outputs=[text_model_selector, img_model_selector, ner_model_selector])
         ner_load_btn.click(fn=load_ner_model, inputs=[ner_model_selector], outputs=[ner_status], concurrency_id="model_ops")
         ner_unload_btn.click(fn=unload, outputs=[ner_status], concurrency_id="model_ops")
         ner_btn.click(fn=extract_entities, inputs=[ner_input], outputs=[ner_output, ner_meta], concurrency_id="model_ops")

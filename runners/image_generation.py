@@ -1,9 +1,11 @@
 import time
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 import torch
 
+from config.settings import Settings
 from runners.base import BaseRunner, RunnerInfo, RunnerStatus, RunResult
 from core.device import DeviceManager
 from utils.errors import ModelLoadError, VRAMError
@@ -16,9 +18,6 @@ _PIPELINE_INDEX = "model_index.json"
 _LORA_INDICATORS = ("adapter_config.json", "pytorch_lora_weights.safetensors")
 
 
-_BASE_MODEL_TAG_PREFIXES = ("adapter:", "finetune:", "quantized:", "merge:")
-
-
 def _is_lora_tagged(tags: set) -> bool:
     if "lora" in tags or "template:sd-lora" in tags:
         return True
@@ -29,13 +28,23 @@ def _detect_model_format(model_id: str):
     """
     Returns (fmt, info) where fmt is one of:
     'pipeline', 'single_file', 'lora', 'unknown'.
-    Inspects the file list and tags from HF Hub without downloading anything.
+    Inspects only the local snapshot's files and local README/config metadata
+    — a model that's already cached should never require a Hub lookup to
+    classify it.
     """
     try:
-        from huggingface_hub import model_info
-        info = model_info(model_id)
-        filenames = {s.rfilename for s in (info.siblings or [])}
-        tags = set(getattr(info, "tags", None) or [])
+        from core.cache_manager import CacheManager
+
+        cache_manager = CacheManager(cache_dir=str(Settings.DEFAULT_CACHE_DIR))
+        filenames = set(cache_manager.list_local_files(model_id))
+        info = cache_manager.get_local_model_metadata(model_id)
+        tags = {str(t).lower() for t in (info.tags or [])}
+        pipeline_tag = (info.pipeline_tag or "").lower()
+
+        if pipeline_tag in {"text-to-video", "video-generation"}:
+            raise ValueError(f"'{model_id}' is a video model, not an image-generation model.")
+        if "text-to-video" in tags:
+            raise ValueError(f"'{model_id}' is a video model, not an image-generation model.")
 
         if _PIPELINE_INDEX in filenames:
             return "pipeline", info
@@ -48,6 +57,8 @@ def _detect_model_format(model_id: str):
                 return "lora", info
             return "single_file", info
         return "unknown", info
+    except ValueError:
+        raise
     except Exception:
         return "unknown", None
 
@@ -56,28 +67,7 @@ def _get_lora_base_model(info) -> Optional[str]:
     """Best-effort resolution of the base model a LoRA repo was trained on."""
     if info is None:
         return None
-
-    card_data = getattr(info, "card_data", None)
-    if card_data is not None:
-        base_model = getattr(card_data, "base_model", None) or (
-            card_data.get("base_model") if hasattr(card_data, "get") else None
-        )
-        if isinstance(base_model, list) and base_model:
-            base_model = base_model[0]
-        if isinstance(base_model, str) and base_model:
-            return base_model
-
-    for tag in getattr(info, "tags", None) or []:
-        if not tag.startswith("base_model:"):
-            continue
-        remainder = tag[len("base_model:"):]
-        for prefix in _BASE_MODEL_TAG_PREFIXES:
-            if remainder.startswith(prefix):
-                remainder = remainder[len(prefix):]
-                break
-        if remainder:
-            return remainder
-    return None
+    return getattr(info, "base_model", None)
 
 
 def _find_lora_weight_file(filenames) -> Optional[str]:
@@ -101,11 +91,12 @@ def _find_lora_weight_file(filenames) -> Optional[str]:
 
 
 def _find_single_file(model_id: str) -> Optional[str]:
-    """Return the filename of the best single-file checkpoint in the repo."""
+    """Return the filename of the best single-file checkpoint in the local snapshot."""
     try:
-        from huggingface_hub import model_info
-        info = model_info(model_id)
-        filenames = [s.rfilename for s in (info.siblings or [])]
+        from core.cache_manager import CacheManager
+
+        cache_manager = CacheManager(cache_dir=str(Settings.DEFAULT_CACHE_DIR))
+        filenames = cache_manager.list_local_files(model_id)
 
         # Prefer fp16 safetensors, then any safetensors, then ckpt
         for name in filenames:
@@ -120,6 +111,16 @@ def _find_single_file(model_id: str) -> Optional[str]:
     except Exception:
         pass
     return None
+
+
+def _resolve_local_model_path(model_id: str) -> Optional[str]:
+    try:
+        from core.cache_manager import CacheManager
+
+        cache_manager = CacheManager(cache_dir=str(Settings.DEFAULT_CACHE_DIR))
+        return cache_manager.resolve_local_model_path(model_id)
+    except Exception:
+        return None
 
 
 class ImageGenerationRunner(BaseRunner):
@@ -139,13 +140,23 @@ class ImageGenerationRunner(BaseRunner):
     def load(self, model_id: str, **kwargs) -> None:
         self._status = RunnerStatus.LOADING
         try:
-            fmt, info = _detect_model_format(model_id)
+            local_path = _resolve_local_model_path(model_id)
+            if not local_path:
+                raise ModelLoadError(
+                    f"'{model_id}' is not present in the local cache at "
+                    f"{Settings.DEFAULT_CACHE_DIR}. This app only loads cached local models."
+                )
+
+            logger.info(f"Using local cache snapshot for {model_id}: {local_path}")
+            model_ref = local_path
+
+            fmt, info = _detect_model_format(model_ref)
             logger.info(f"Detected format for {model_id}: {fmt}")
 
             if fmt == "unknown":
                 raise ModelLoadError(
-                    f"'{model_id}' does not appear to be a runnable image generation model. "
-                    f"It has no model_index.json and no recognised checkpoint files."
+                    f"'{model_id}' is not a valid cached image-generation model in the local cache at "
+                    f"{Settings.DEFAULT_CACHE_DIR}."
                 )
 
             dtype = torch.float16 if self._device == "cuda" else torch.float32
@@ -158,13 +169,13 @@ class ImageGenerationRunner(BaseRunner):
                         f"base model could be determined from its tags/card data. "
                         f"Search for the base model instead and load that."
                     )
-                self._load_lora(model_id, info, base_model, dtype, **kwargs)
+                self._load_lora(model_ref, info, base_model, dtype, **kwargs)
                 self._model_id = f"{model_id} (LoRA on {base_model})"
             elif fmt == "single_file":
-                self._load_single_file(model_id, dtype, **kwargs)
+                self._load_single_file(model_ref, dtype, **kwargs)
                 self._model_id = model_id
             else:
-                self._load_pipeline(model_id, dtype, **kwargs)
+                self._load_pipeline(model_ref, dtype, **kwargs)
                 self._model_id = model_id
 
             self._status = RunnerStatus.READY
@@ -200,26 +211,38 @@ class ImageGenerationRunner(BaseRunner):
             "torch_dtype": dtype,
             "low_cpu_mem_usage": True,
             "trust_remote_code": kwargs.get("trust_remote_code", False),
+            "local_files_only": True,
         }
+        if DeviceManager.use_distributed_device_map():
+            # diffusers pipelines only accept "balanced" (or "cuda"/"cpu"),
+            # not "auto" — that's a transformers-only value.
+            load_kwargs["device_map"] = "balanced"
 
         # Try fp16 variant first (smaller download, faster load)
         if dtype == torch.float16:
             try:
                 self._pipeline = DiffusionPipeline.from_pretrained(
-                    model_id, variant="fp16", **load_kwargs
+                    model_id,
+                    variant="fp16",
+                    cache_dir=str(Settings.DEFAULT_CACHE_DIR),
+                    **load_kwargs,
                 )
                 logger.info(f"Loaded fp16 variant of {model_id}")
             except Exception:
                 logger.info(f"No fp16 variant found, loading default weights")
                 self._pipeline = DiffusionPipeline.from_pretrained(
-                    model_id, **load_kwargs
+                    model_id,
+                    cache_dir=str(Settings.DEFAULT_CACHE_DIR),
+                    **load_kwargs,
                 )
         else:
             self._pipeline = DiffusionPipeline.from_pretrained(
-                model_id, **load_kwargs
+                model_id,
+                cache_dir=str(Settings.DEFAULT_CACHE_DIR),
+                **load_kwargs,
             )
 
-        if self._device == "cuda":
+        if self._device == "cuda" and not DeviceManager.use_distributed_device_map():
             vram = DeviceManager.get_vram_usage()
             free_gb = vram["free"] / (1024 ** 3)
             if free_gb < 4.0:
@@ -232,27 +255,36 @@ class ImageGenerationRunner(BaseRunner):
                 self._pipeline = self._pipeline.to("cuda")
 
     def _load_lora(self, model_id: str, info, base_model: str, dtype, **kwargs) -> None:
-        filenames = [s.rfilename for s in (getattr(info, "siblings", None) or [])]
+        from core.cache_manager import CacheManager
+
+        cache_manager = CacheManager(cache_dir=str(Settings.DEFAULT_CACHE_DIR))
+        filenames = cache_manager.list_local_files(model_id)
         weight_name = _find_lora_weight_file(filenames)
         if not weight_name:
-            raise ModelLoadError(f"Could not find a LoRA weight file in {model_id}.")
+            raise ModelLoadError(f"Could not find a LoRA weight file in the local cache at {model_id}.")
 
-        logger.info(f"Loading base model {base_model} for LoRA {model_id}")
-        self._load_pipeline(base_model, dtype, **kwargs)
+        base_local_path = _resolve_local_model_path(base_model)
+        if not base_local_path:
+            raise ModelLoadError(
+                f"LoRA base model '{base_model}' is not present in the local cache at "
+                f"{Settings.DEFAULT_CACHE_DIR}. Download it first, then retry this LoRA."
+            )
+
+        logger.info(f"Loading base model {base_model} for LoRA at {model_id}")
+        self._load_pipeline(base_local_path, dtype, **kwargs)
 
         logger.info(f"Applying LoRA weights: {model_id}/{weight_name}")
         self._pipeline.load_lora_weights(model_id, weight_name=weight_name)
 
     def _load_single_file(self, model_id: str, dtype, **kwargs) -> None:
         from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
-        from huggingface_hub import hf_hub_download
 
         filename = _find_single_file(model_id)
         if not filename:
-            raise ModelLoadError(f"Could not find a checkpoint file in {model_id}.")
+            raise ModelLoadError(f"Could not find a checkpoint file in the local cache at {model_id}.")
 
-        logger.info(f"Downloading single checkpoint file: {filename}")
-        local_path = hf_hub_download(model_id, filename=filename)
+        local_path = str(Path(model_id) / filename)
+        logger.info(f"Loading local single-file checkpoint: {local_path}")
 
         # Try SDXL first (larger models), fall back to SD 1.5/2.x
         for cls in (StableDiffusionXLPipeline, StableDiffusionPipeline):

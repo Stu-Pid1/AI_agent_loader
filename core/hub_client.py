@@ -42,6 +42,7 @@ class HubClient:
 
     def __init__(self, token: Optional[str] = None):
         self._api = HfApi(token=token or Settings.HF_TOKEN)
+        self._detail_cache: Dict[str, ModelDetail] = {}
 
     def search_models(
         self,
@@ -91,7 +92,9 @@ class HubClient:
             logger.error(f"Error searching models: {e}")
             raise
 
-    def get_model_detail(self, model_id: str) -> ModelDetail:
+    def get_model_detail(self, model_id: str, use_cache: bool = True) -> ModelDetail:
+        if use_cache and model_id in self._detail_cache:
+            return self._detail_cache[model_id]
         try:
             info = self._api.model_info(model_id, files_metadata=True)
 
@@ -108,7 +111,7 @@ class HubClient:
 
             author = model_id.split("/")[0] if "/" in model_id else ""
 
-            return ModelDetail(
+            detail = ModelDetail(
                 model_id=info.id,
                 pipeline_tag=getattr(info, "pipeline_tag", None),
                 tags=list(getattr(info, "tags", []) or []),
@@ -122,6 +125,8 @@ class HubClient:
                 safetensors=getattr(info, "safetensors", None),
                 gated=getattr(info, "gated", None),
             )
+            self._detail_cache[model_id] = detail
+            return detail
 
         except Exception as e:
             logger.error(f"Error getting model detail for {model_id}: {e}")

@@ -1,5 +1,5 @@
 import gradio as gr
-from typing import List, Optional
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 from core.device import DeviceManager
 from utils.formatting import format_bytes
@@ -43,3 +43,35 @@ def create_vram_display() -> gr.Markdown:
             f"({pct:.0f}% used)"
         )
     return gr.Markdown("**GPU:** Not available (CPU mode)")
+
+
+def is_model_compatible(model_id: str, allowed_tags: Iterable[str], cache_manager) -> bool:
+    """Checks compatibility using only metadata already on disk.
+
+    Cached models never require a Hub lookup to classify — the app reads
+    README front matter / config.json from the local snapshot instead.
+    """
+    if not model_id:
+        return False
+
+    allowed = {tag.lower() for tag in allowed_tags}
+    try:
+        detail = cache_manager.get_local_model_metadata(model_id)
+        actual = (detail.pipeline_tag or "").lower()
+        if actual in allowed:
+            return True
+        for tag in (detail.tags or []):
+            if str(tag).lower() in allowed:
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def build_compatible_dropdown_choices(model_ids: Sequence[str], allowed_tags: Iterable[str], cache_manager) -> List[Tuple[str, str]]:
+    choices: List[Tuple[str, str]] = []
+    for model_id in model_ids:
+        compatible = is_model_compatible(model_id, allowed_tags, cache_manager)
+        label = model_id if compatible else f"{model_id} ❌"
+        choices.append((label, model_id))
+    return choices

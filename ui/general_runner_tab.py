@@ -4,7 +4,7 @@ import logging
 from core.model_manager import ModelManager
 from core.cache_manager import CacheManager
 from core.hub_client import HubClient
-from ui.components import update_model_status
+from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
 
 logger = logging.getLogger("ai_agent_loader.ui.general_runner")
 
@@ -66,11 +66,15 @@ def create_general_runner_tab(
         # --- Handlers ---
         def refresh_models():
             cached = cache_manager.get_cached_model_ids()
-            return gr.update(choices=cached, value=None)
+            sum_choices = build_compatible_dropdown_choices(cached, {"summarization"}, cache_manager)
+            tr_choices = build_compatible_dropdown_choices(cached, {"translation"}, cache_manager)
+            return gr.update(choices=sum_choices, value=None), gr.update(choices=tr_choices, value=None)
 
         def load_sum_model(model_id, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_id:
                 return "**Status:** No model selected."
+            if not is_model_compatible(model_id, {"summarization"}, cache_manager):
+                return "**Status:** This model is not compatible with the Summarization tab (marked with ❌)."
             try:
                 progress(0, desc=f"Loading {model_id}...")
                 model_manager.load_model(model_id, "summarization")
@@ -81,6 +85,8 @@ def create_general_runner_tab(
         def load_tr_model(model_id, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_id:
                 return "**Status:** No model selected."
+            if not is_model_compatible(model_id, {"translation"}, cache_manager):
+                return "**Status:** This model is not compatible with the Translation tab (marked with ❌)."
             try:
                 progress(0, desc=f"Loading {model_id}...")
                 model_manager.load_model(model_id, "translation")
@@ -115,7 +121,7 @@ def create_general_runner_tab(
             return f"Error: {result.error}", ""
 
         # --- Wire ---
-        sum_refresh.click(fn=refresh_models, outputs=[sum_model])
+        sum_refresh.click(fn=refresh_models, outputs=[sum_model, tr_model])
         sum_load.click(fn=load_sum_model, inputs=[sum_model], outputs=[sum_status], concurrency_id="model_ops")
         sum_unload.click(fn=unload, outputs=[sum_status], concurrency_id="model_ops")
         sum_btn.click(
@@ -124,7 +130,7 @@ def create_general_runner_tab(
             concurrency_id="model_ops",
         )
 
-        tr_refresh.click(fn=refresh_models, outputs=[tr_model])
+        tr_refresh.click(fn=refresh_models, outputs=[sum_model, tr_model])
         tr_load.click(fn=load_tr_model, inputs=[tr_model], outputs=[tr_status], concurrency_id="model_ops")
         tr_unload.click(fn=unload, outputs=[tr_status], concurrency_id="model_ops")
         tr_btn.click(fn=translate, inputs=[tr_input], outputs=[tr_output, tr_meta], concurrency_id="model_ops")

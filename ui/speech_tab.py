@@ -4,7 +4,8 @@ import logging
 
 from core.model_manager import ModelManager
 from core.cache_manager import CacheManager
-from ui.components import update_model_status
+from core.hub_client import HubClient
+from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
 
 logger = logging.getLogger("ai_agent_loader.ui.speech")
 
@@ -12,6 +13,7 @@ logger = logging.getLogger("ai_agent_loader.ui.speech")
 def create_speech_tab(
     model_manager: ModelManager,
     cache_manager: CacheManager,
+    hub_client: HubClient,
 ):
     with gr.Tab("Speech", id="speech"):
         gr.Markdown("## Speech Processing")
@@ -69,6 +71,11 @@ def create_speech_tab(
                     placeholder="Enter text to convert to speech...",
                     lines=4,
                 )
+                tts_reference_audio = gr.Audio(
+                    label="Reference Voice Sample (optional — clones this voice, if the "
+                    "model supports it, e.g. SpeechT5)",
+                    type="filepath",
+                )
                 tts_btn = gr.Button("Synthesize", variant="primary")
                 tts_output = gr.Audio(label="Generated Audio")
                 tts_meta = gr.Markdown("")
@@ -76,11 +83,18 @@ def create_speech_tab(
         # --- Event Handlers ---
         def refresh_models():
             cached = cache_manager.get_cached_model_ids()
-            return gr.update(choices=cached, value=None)
+            stt_choices = build_compatible_dropdown_choices(cached, {"automatic-speech-recognition"}, cache_manager)
+            tts_choices = build_compatible_dropdown_choices(cached, {"text-to-speech"}, cache_manager)
+            return gr.update(choices=stt_choices, value=None), gr.update(choices=tts_choices, value=None)
 
         def load_stt(model_id, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_id:
                 return "**Status:** No model selected."
+            if not is_model_compatible(model_id, {"automatic-speech-recognition"}, cache_manager):
+                return (
+                    "**Status:** This model is not compatible with the Speech to Text tab "
+                    "(marked with ❌)."
+                )
             try:
                 progress(0, desc=f"Loading {model_id}...")
                 model_manager.load_model(model_id, "automatic-speech-recognition")
@@ -91,6 +105,11 @@ def create_speech_tab(
         def load_tts(model_id, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_id:
                 return "**Status:** No model selected."
+            if not is_model_compatible(model_id, {"text-to-speech"}, cache_manager):
+                return (
+                    "**Status:** This model is not compatible with the Text to Speech tab "
+                    "(marked with ❌)."
+                )
             try:
                 progress(0, desc=f"Loading {model_id}...")
                 model_manager.load_model(model_id, "text-to-speech")
@@ -116,13 +135,13 @@ def create_speech_tab(
                 return result.output, meta
             return f"Error: {result.error}", ""
 
-        def synthesize(text, progress: gr.Progress = gr.Progress(track_tqdm=True)):
+        def synthesize(text, reference_audio, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_manager.active_model_id:
                 return None, "No model loaded."
             if not text.strip():
                 return None, "Enter text."
 
-            result = model_manager.run_inference(text.strip())
+            result = model_manager.run_inference(text.strip(), reference_audio=reference_audio)
             if result.success:
                 audio_data = result.output
                 sr = audio_data.get("sampling_rate", 16000)
@@ -133,12 +152,17 @@ def create_speech_tab(
                     else:
                         audio_tuple = (sr, np.array(waveform))
                     meta = f"**Duration:** {result.metadata.get('duration_seconds', '?')}s"
+                    note = result.metadata.get("voice_conditioning_note")
+                    if note:
+                        meta += f" | ⚠️ {note}"
+                    elif result.metadata.get("voice_conditioning_used"):
+                        meta += " | 🎙️ Voice sample applied"
                     return audio_tuple, meta
                 return None, "No audio generated."
             return None, f"Error: {result.error}"
 
         # --- Wire Events ---
-        stt_refresh_btn.click(fn=refresh_models, outputs=[stt_model_selector])
+        stt_refresh_btn.click(fn=refresh_models, outputs=[stt_model_selector, tts_model_selector])
         stt_load_btn.click(fn=load_stt, inputs=[stt_model_selector], outputs=[stt_status], concurrency_id="model_ops")
         stt_unload_btn.click(fn=unload, outputs=[stt_status], concurrency_id="model_ops")
         stt_btn.click(
@@ -148,12 +172,12 @@ def create_speech_tab(
             concurrency_id="model_ops",
         )
 
-        tts_refresh_btn.click(fn=refresh_models, outputs=[tts_model_selector])
+        tts_refresh_btn.click(fn=refresh_models, outputs=[stt_model_selector, tts_model_selector])
         tts_load_btn.click(fn=load_tts, inputs=[tts_model_selector], outputs=[tts_status], concurrency_id="model_ops")
         tts_unload_btn.click(fn=unload, outputs=[tts_status], concurrency_id="model_ops")
         tts_btn.click(
             fn=synthesize,
-            inputs=[tts_input],
+            inputs=[tts_input, tts_reference_audio],
             outputs=[tts_output, tts_meta],
             concurrency_id="model_ops",
         )

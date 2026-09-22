@@ -4,7 +4,7 @@ import logging
 from core.model_manager import ModelManager
 from core.cache_manager import CacheManager
 from core.hub_client import HubClient
-from ui.components import update_model_status
+from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
 
 logger = logging.getLogger("ai_agent_loader.ui.text_generation")
 
@@ -96,19 +96,41 @@ def create_text_generation_tab(
         # --- Event Handlers ---
         def refresh_models():
             cached = cache_manager.get_cached_model_ids()
-            return gr.update(choices=cached, value=None)
+            choices = build_compatible_dropdown_choices(
+                cached,
+                {
+                    "text-generation",
+                    "text2text-generation",
+                    "image-text-to-text",
+                    "video-text-to-text",
+                    "audio-text-to-text",
+                    "document-question-answering",
+                    "visual-question-answering",
+                },
+                cache_manager,
+            )
+            return gr.update(choices=choices, value=None)
 
         def load_model(model_id, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_id:
                 return "**Status:** No model selected."
+            allowed = {
+                "text-generation",
+                "text2text-generation",
+                "image-text-to-text",
+                "video-text-to-text",
+                "audio-text-to-text",
+                "document-question-answering",
+                "visual-question-answering",
+            }
+            if not is_model_compatible(model_id, allowed, cache_manager):
+                return (
+                    "**Status:** This model is not compatible with the Text Generation tab "
+                    "(marked with ❌)."
+                )
             try:
                 progress(0, desc=f"Loading {model_id}...")
-                # Detect pipeline tag
-                try:
-                    detail = hub_client.get_model_detail(model_id)
-                    tag = detail.pipeline_tag or "text-generation"
-                except Exception:
-                    tag = "text-generation"
+                tag = cache_manager.get_local_model_metadata(model_id).pipeline_tag or "text-generation"
 
                 model_manager.load_model(model_id, tag)
                 return update_model_status(model_manager)

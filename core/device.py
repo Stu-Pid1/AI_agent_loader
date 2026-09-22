@@ -27,7 +27,7 @@ class DeviceManager:
 
             device = torch.cuda.current_device()
             props = torch.cuda.get_device_properties(device)
-            total = props.total_mem / (1024**3)
+            total = props.total_memory / (1024**3)
             allocated = torch.cuda.memory_allocated(device) / (1024**3)
             reserved = torch.cuda.memory_reserved(device) / (1024**3)
             free = total - reserved
@@ -54,6 +54,18 @@ class DeviceManager:
             return "cpu"
 
     @staticmethod
+    def get_visible_gpu_count() -> int:
+        try:
+            import torch
+            return int(torch.cuda.device_count()) if torch.cuda.is_available() else 0
+        except Exception:
+            return 0
+
+    @staticmethod
+    def use_distributed_device_map() -> bool:
+        return DeviceManager.get_visible_gpu_count() > 1
+
+    @staticmethod
     def get_optimal_dtype():
         import torch
 
@@ -70,7 +82,7 @@ class DeviceManager:
                 return {"allocated": 0, "reserved": 0, "free": 0, "total": 0}
 
             device = torch.cuda.current_device()
-            total = torch.cuda.get_device_properties(device).total_mem
+            total = torch.cuda.get_device_properties(device).total_memory
             allocated = torch.cuda.memory_allocated(device)
             reserved = torch.cuda.memory_reserved(device)
 
@@ -91,7 +103,7 @@ class DeviceManager:
             if not torch.cuda.is_available():
                 return False
             device = torch.cuda.current_device()
-            total = torch.cuda.get_device_properties(device).total_mem
+            total = torch.cuda.get_device_properties(device).total_memory
             reserved = torch.cuda.memory_reserved(device)
             free = total - reserved
             # Leave 500MB headroom

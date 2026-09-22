@@ -1,3 +1,5 @@
+import os
+import sys
 import time
 import logging
 import glob
@@ -8,6 +10,31 @@ from runners.base import BaseRunner, RunnerInfo, RunnerStatus, RunResult
 from utils.errors import ModelLoadError, VRAMError, ModelNotLoadedError
 
 logger = logging.getLogger("ai_agent_loader.runners.text_generation_gguf")
+
+
+def _ensure_cuda_dll_path() -> None:
+    """Make sure llama-cpp-python's CUDA backend can actually find the CUDA runtime DLLs.
+
+    llama-cpp-python loads its native libraries with ctypes winmode=RTLD_GLOBAL
+    (which is 0 on Windows), which disables the "safe" os.add_dll_directory()
+    search path and falls back to the classic search order — PATH included,
+    os.add_dll_directory() additions ignored. CUDA 13+ also moved its runtime
+    DLLs (cudart64_*.dll, cublas64_*.dll, ...) from <toolkit>/bin into
+    <toolkit>/bin/x64, which a typical CUDA install does not add to PATH.
+    Without this, ggml-cuda.dll fails to load and everything silently falls
+    back to CPU.
+    """
+    if sys.platform != "win32":
+        return
+    cuda_path = os.environ.get("CUDA_PATH")
+    if not cuda_path:
+        return
+    path_entries = os.environ.get("PATH", "").split(os.pathsep)
+    for sub in (os.path.join("bin", "x64"), "bin"):
+        candidate = os.path.join(cuda_path, sub)
+        if os.path.isdir(candidate) and candidate not in path_entries:
+            os.environ["PATH"] = candidate + os.pathsep + os.environ.get("PATH", "")
+            path_entries.insert(0, candidate)
 
 
 class GGUFTextGenerationRunner(BaseRunner):
@@ -29,60 +56,61 @@ class GGUFTextGenerationRunner(BaseRunner):
         )
 
     @staticmethod
-    def find_gguf_file(model_id: str) -> Optional[str]:
-        try:
-            from huggingface_hub import model_info, hf_hub_download
+    def _local_gguf_files(model_id: str) -> List[str]:
+        """GGUF filenames already present in the local cache — never the Hub."""
+        from config.settings import Settings
+        from core.cache_manager import CacheManager
 
-            info = model_info(model_id)
-            gguf_files = [
-                s.rfilename
-                for s in (info.siblings or [])
-                if s.rfilename.endswith(".gguf")
-            ]
-            if not gguf_files:
-                return None
+        cache_manager = CacheManager(cache_dir=str(Settings.DEFAULT_CACHE_DIR))
+        return [f for f in cache_manager.list_local_files(model_id) if f.endswith(".gguf")]
 
-            # Prefer Q4_K_M quantization, then Q5, then the smallest file
-            for preferred in ["Q4_K_M", "Q4_K_S", "Q5_K_M", "q4_k_m", "q5_k_m"]:
-                for f in gguf_files:
-                    if preferred in f:
-                        return f
-            return gguf_files[0]
-        except Exception:
+    @classmethod
+    def find_gguf_file(cls, model_id: str) -> Optional[str]:
+        gguf_files = cls._local_gguf_files(model_id)
+        if not gguf_files:
             return None
 
-    @staticmethod
-    def has_gguf_files(model_id: str) -> bool:
-        try:
-            from huggingface_hub import model_info
+        # Prefer Q4_K_M quantization, then Q5, then the smallest file
+        for preferred in ["Q4_K_M", "Q4_K_S", "Q5_K_M", "q4_k_m", "q5_k_m"]:
+            for f in gguf_files:
+                if preferred in f:
+                    return f
+        return gguf_files[0]
 
-            info = model_info(model_id)
-            return any(
-                s.rfilename.endswith(".gguf") for s in (info.siblings or [])
-            )
-        except Exception:
-            return False
+    @classmethod
+    def has_gguf_files(cls, model_id: str) -> bool:
+        return bool(cls._local_gguf_files(model_id))
 
     def load(self, model_id: str, **kwargs) -> None:
         self._status = RunnerStatus.LOADING
         try:
+            _ensure_cuda_dll_path()
             from llama_cpp import Llama
-            from huggingface_hub import hf_hub_download
             from config.settings import Settings
+            from core.cache_manager import CacheManager
+
+            cache_manager = CacheManager(cache_dir=str(Settings.DEFAULT_CACHE_DIR))
+            local_dir = cache_manager.resolve_local_model_path(model_id)
+            if not local_dir:
+                raise ModelLoadError(
+                    f"'{model_id}' is not present in the local cache at "
+                    f"{Settings.DEFAULT_CACHE_DIR}. Download it from the Hub Browser tab first."
+                )
 
             gguf_file = kwargs.get("gguf_file") or self.find_gguf_file(model_id)
             if not gguf_file:
                 raise ModelLoadError(
-                    f"No GGUF file found in {model_id}. "
-                    f"This model may not have quantized versions."
+                    f"No GGUF file found in the local cache for {model_id}. "
+                    f"This model may not have quantized versions, or the download is incomplete."
                 )
 
-            logger.info(f"Downloading GGUF file: {model_id}/{gguf_file}")
-            model_path = hf_hub_download(
-                model_id,
-                filename=gguf_file,
-                token=Settings.HF_TOKEN,
-            )
+            model_path = str(Path(local_dir) / gguf_file)
+            if not Path(model_path).exists():
+                raise ModelLoadError(
+                    f"'{gguf_file}' was not found in the local cache for {model_id}."
+                )
+
+            logger.info(f"Loading local GGUF file: {model_path}")
 
             n_gpu_layers = -1 if self._device == "cuda" else 0
             n_ctx = kwargs.get("n_ctx", 4096)

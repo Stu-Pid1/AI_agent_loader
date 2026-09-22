@@ -11,6 +11,7 @@ transformers>=4.44.0
 diffusers>=0.30.0
 accelerate>=0.33.0
 safetensors>=0.4.0
+peft>=0.13.0
 
 # Quantized model support
 # Install with CUDA: CMAKE_ARGS="-DGGML_CUDA=on" pip install llama-cpp-python
@@ -20,10 +21,27 @@ llama-cpp-python>=0.3.0
 soundfile>=0.12.0
 librosa>=0.10.0
 
+# Voice conversion (Voice Swap tab)
+# Install WITHOUT its declared deps: pip install --no-deps openvoice-cli
+# Its normal deps (faster-whisper, whisper-timestamped, pydub, wavmark) are
+# only used by code paths this app doesn't call, and one of them pins
+# librosa==0.9.1, which would conflict with librosa>=0.10.0 above.
+openvoice-cli>=0.0.5
+
+# Orpheus-style discrete-audio-token TTS (voice cloning, e.g. Svara-TTS)
+snac>=1.2.0
+
+# Speaker-embedding extraction for optional voice-sample conditioning in the
+# plain Text to Speech tab (only architectures like SpeechT5 use this)
+speechbrain>=1.0.0
+
 # Image processing
 Pillow>=10.0.0
 
 # Utilities
 psutil>=5.9.0
 nvidia-ml-py>=12.0.0
+numpy>=1.26.0
+pandas>=2.2.0
 python-dotenv>=1.0.0
+PyYAML>=6.0

@@ -5,6 +5,8 @@ from typing import Any, Dict
 import torch
 from transformers import pipeline as hf_pipeline
 
+from config.settings import Settings
+from core.device import DeviceManager
 from runners.base import BaseRunner, RunnerInfo, RunnerStatus, RunResult
 from utils.errors import ModelLoadError, VRAMError, ModelNotLoadedError
 
@@ -27,11 +29,19 @@ class SummarizationRunner(BaseRunner):
     def load(self, model_id: str, **kwargs) -> None:
         self._status = RunnerStatus.LOADING
         try:
-            device = 0 if self._device == "cuda" else -1
+            pipeline_kwargs = {
+                "model": model_id,
+            }
+            if self._device == "cuda" and DeviceManager.use_distributed_device_map():
+                pipeline_kwargs["device_map"] = "auto"
+            elif self._device == "cuda":
+                pipeline_kwargs["device"] = 0
+            else:
+                pipeline_kwargs["device"] = -1
+
             self._pipeline = hf_pipeline(
                 "summarization",
-                model=model_id,
-                device=device,
+                **pipeline_kwargs,
             )
             self._model_id = model_id
             self._status = RunnerStatus.READY

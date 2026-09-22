@@ -5,6 +5,7 @@ from typing import Any, Dict
 import torch
 from transformers import pipeline as hf_pipeline
 
+from config.settings import Settings
 from runners.base import BaseRunner, RunnerInfo, RunnerStatus, RunResult
 from utils.errors import ModelLoadError, VRAMError, ModelNotLoadedError
 

@@ -62,7 +62,7 @@ class ModelManager:
                 self._active_pipeline_tag = None
 
             runner = runner_class(device=self._device)
-            runner.load(model_id, **kwargs)
+            runner.load(model_id, task=pipeline_tag, **kwargs)
 
             self._active_runner = runner
             self._active_model_id = model_id

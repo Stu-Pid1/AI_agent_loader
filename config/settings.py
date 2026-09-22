@@ -36,10 +36,38 @@ class Settings:
     _user = _load_user_settings()
     DEFAULT_CACHE_DIR: Path = Path(_user.get("download_dir", _HF_DEFAULT))
 
+    @classmethod
+    def apply_download_dir(cls, path: str) -> Path:
+        """Persist the same cache path to all relevant HF environment variables."""
+        new_path = Path(path).expanduser().resolve()
+        new_path.mkdir(parents=True, exist_ok=True)
+        cls.DEFAULT_CACHE_DIR = new_path
+
+        for key in (
+            "HF_HOME",
+            "HF_HUB_CACHE",
+            "HUGGINGFACE_HUB_CACHE",
+            "TRANSFORMERS_CACHE",
+        ):
+            os.environ[key] = str(new_path)
+
+        os.environ["HF_HOME"] = str(new_path)
+        os.environ["HF_HUB_CACHE"] = str(new_path)
+        os.environ["HUGGINGFACE_HUB_CACHE"] = str(new_path)
+        os.environ["TRANSFORMERS_CACHE"] = str(new_path)
+        return new_path
+
     SUPPORTED_PIPELINE_TAGS = [
         "text-generation",
         "text2text-generation",
+        "image-text-to-text",
+        "video-text-to-text",
+        "audio-text-to-text",
+        "document-question-answering",
+        "visual-question-answering",
+        "image-to-text",
         "text-to-image",
+        "text-to-video",
         "text-classification",
         "sentiment-analysis",
         "zero-shot-classification",
@@ -48,6 +76,7 @@ class Settings:
         "automatic-speech-recognition",
         "text-to-speech",
         "text-to-audio",
+        "audio-to-audio",
         "image-classification",
         "object-detection",
         "summarization",
@@ -74,12 +103,11 @@ class Settings:
     @classmethod
     def set_download_dir(cls, path: str) -> Path:
         """Persist a new download directory and apply it immediately."""
-        new_path = Path(path).expanduser().resolve()
-        new_path.mkdir(parents=True, exist_ok=True)
-        cls.DEFAULT_CACHE_DIR = new_path
-        # Also update HF env var so huggingface_hub picks it up for downloads
-        os.environ["HF_HUB_CACHE"] = str(new_path)
+        new_path = cls.apply_download_dir(path)
         user = _load_user_settings()
         user["download_dir"] = str(new_path)
         _save_user_settings(user)
         return new_path
+
+
+Settings.apply_download_dir(str(Settings.DEFAULT_CACHE_DIR))

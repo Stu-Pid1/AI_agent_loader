@@ -24,6 +24,7 @@ class TaskRegistry:
     def _register_defaults(self) -> None:
         from runners.text_generation import TextGenerationRunner
         from runners.image_generation import ImageGenerationRunner
+        from runners.text_to_video import TextToVideoRunner
         from runners.text_classification import TextClassificationRunner
         from runners.token_classification import TokenClassificationRunner
         from runners.speech_to_text import SpeechToTextRunner
@@ -32,10 +33,20 @@ class TaskRegistry:
         from runners.object_detection import ObjectDetectionRunner
         from runners.summarization import SummarizationRunner
         from runners.translation import TranslationRunner
+        from runners.face_swap import FaceSwapRunner
+        from runners.voice_swap import VoiceSwapRunner
+        from runners.orpheus_tts import OrpheusTTSRunner
 
         self.register("text-generation", TextGenerationRunner)
         self.register("text2text-generation", TextGenerationRunner)
+        self.register("image-text-to-text", TextGenerationRunner)
+        self.register("video-text-to-text", TextGenerationRunner)
+        self.register("audio-text-to-text", TextGenerationRunner)
+        self.register("document-question-answering", TextGenerationRunner)
+        self.register("visual-question-answering", TextGenerationRunner)
+        self.register("image-to-text", TextGenerationRunner)
         self.register("text-to-image", ImageGenerationRunner)
+        self.register("text-to-video", TextToVideoRunner)
         self.register("text-classification", TextClassificationRunner)
         self.register("sentiment-analysis", TextClassificationRunner)
         self.register("zero-shot-classification", TextClassificationRunner)
@@ -48,6 +59,9 @@ class TaskRegistry:
         self.register("object-detection", ObjectDetectionRunner)
         self.register("summarization", SummarizationRunner)
         self.register("translation", TranslationRunner)
+        self.register("face-swap", FaceSwapRunner)
+        self.register("voice-swap", VoiceSwapRunner)
+        self.register("orpheus-tts", OrpheusTTSRunner)
 
     def register_runner(
         self, pipeline_tags: List[str], runner_class: Type[BaseRunner]
