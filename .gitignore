@@ -1,6 +1,9 @@
 # User-specific settings (contains local paths)
 user_settings.json
 
+# Saved chat conversations (personal data)
+conversations/
+
 # Environment variables
 .env
 

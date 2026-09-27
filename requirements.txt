@@ -1,6 +1,13 @@
 # Core UI
 gradio>=4.40.0
 
+# LLM REST API (Ollama-style + OpenAI-compatible), mounted alongside the
+# Gradio UI on the same port — already a gradio dependency, listed explicitly
+# since app.py and core/api_routes.py import them directly
+fastapi>=0.110.0
+uvicorn>=0.29.0
+pydantic>=2.0.0
+
 # Hugging Face Hub
 huggingface_hub>=0.25.0
 

@@ -7,6 +7,8 @@ from core.cache_manager import CacheManager
 from core.model_manager import ModelManager
 from ui.hub_browser_tab import create_hub_browser_tab
 from ui.text_generation_tab import create_text_generation_tab
+from ui.chat_tab import create_chat_tab
+from ui.api_info_tab import create_api_info_tab
 from ui.image_generation_tab import create_image_generation_tab
 from ui.video_generation_tab import create_video_generation_tab
 from ui.face_swap_tab import create_face_swap_tab
@@ -22,7 +24,7 @@ from ui.agent_orchestrator_tab import create_agent_orchestrator_tab
 from ui.components import build_compatible_dropdown_choices
 
 
-def build_app() -> gr.Blocks:
+def build_app() -> tuple:
     registry = TaskRegistry()
     hub_client = HubClient()
     cache_manager = CacheManager()
@@ -39,6 +41,7 @@ def build_app() -> gr.Blocks:
         create_hub_browser_tab(hub_client, cache_manager, model_manager, download_queue_state)
         create_download_queue_tab(download_queue_state, cache_manager, hub_client)
         dropdowns = create_text_generation_tab(model_manager, cache_manager, hub_client)
+        dropdowns += create_chat_tab(model_manager, cache_manager, hub_client)
         dropdowns += create_image_generation_tab(model_manager, cache_manager, hub_client)
         dropdowns += create_video_generation_tab(model_manager, cache_manager, hub_client)
         dropdowns += create_face_swap_tab(model_manager, cache_manager, hub_client)
@@ -50,11 +53,13 @@ def build_app() -> gr.Blocks:
         dropdowns += create_general_runner_tab(model_manager, cache_manager, hub_client)
         dropdowns += create_agent_orchestrator_tab(model_manager, cache_manager, hub_client)
         create_settings_tab(model_manager, cache_manager)
+        create_api_info_tab(model_manager)
 
         # Populate all model dropdowns when the page first loads
         def refresh_all_dropdowns():
             cached = cache_manager.get_cached_model_ids()
             allowed_groups = [
+                {"text-generation", "text2text-generation", "image-text-to-text", "video-text-to-text", "audio-text-to-text", "document-question-answering", "visual-question-answering"},
                 {"text-generation", "text2text-generation", "image-text-to-text", "video-text-to-text", "audio-text-to-text", "document-question-answering", "visual-question-answering"},
                 {"text-to-image"},
                 {"text-to-video"},
@@ -81,4 +86,4 @@ def build_app() -> gr.Blocks:
 
         app.load(fn=refresh_all_dropdowns, outputs=dropdowns)
 
-    return app
+    return app, model_manager, cache_manager
