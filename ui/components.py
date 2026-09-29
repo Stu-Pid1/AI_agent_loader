@@ -29,6 +29,48 @@ def update_model_status(model_manager) -> str:
     return "**Status:** No model loaded"
 
 
+def slider_with_manual_override(
+    label: str,
+    minimum: float,
+    maximum: float,
+    value: float,
+    step: Optional[float] = None,
+    info: Optional[str] = None,
+    scale: Optional[int] = None,
+) -> gr.Number:
+    """A slider for quick visual adjustment, paired with a plain number box
+    that has no upper/lower bound.
+
+    Gradio's Slider rejects (server-side, not just cosmetically) any typed
+    value outside [minimum, maximum], so pairing it with an unbounded Number
+    field is the only way to let manual entry exceed the slider's range.
+    Use the *returned* Number component as the actual input to your event
+    handlers — it always mirrors the slider while its value is in range, and
+    holds the real value when the user manually enters something beyond it
+    (the slider then just visually pins at its own limit).
+    """
+    with gr.Column(scale=scale or 1, min_width=160):
+        slider = gr.Slider(label=label, minimum=minimum, maximum=maximum, value=value, step=step, info=info)
+        number = gr.Number(value=value, show_label=False, container=False)
+
+    def _slider_to_number(v):
+        return v
+
+    def _number_to_slider(v):
+        if v is not None and minimum <= v <= maximum:
+            return gr.update(value=v)
+        return gr.update()
+
+    # Use release(), not change(): change() fires a server round-trip for
+    # every intermediate tick while dragging (potentially dozens per
+    # second), which floods the queue and makes the UI appear to jump
+    # around under the backlog. release() fires once, when the drag ends.
+    slider.release(fn=_slider_to_number, inputs=[slider], outputs=[number])
+    number.change(fn=_number_to_slider, inputs=[number], outputs=[slider])
+
+    return number
+
+
 def create_vram_display() -> gr.Markdown:
     gpu_info = DeviceManager.get_gpu_info()
     if gpu_info.available:

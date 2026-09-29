@@ -5,7 +5,12 @@ import gradio as gr
 from core.cache_manager import CacheManager
 from core.hub_client import HubClient
 from core.model_manager import ModelManager
-from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
+from ui.components import (
+    build_compatible_dropdown_choices,
+    is_model_compatible,
+    slider_with_manual_override,
+    update_model_status,
+)
 
 logger = logging.getLogger("ai_agent_loader.ui.orpheus_tts")
 
@@ -54,9 +59,9 @@ def create_orpheus_tts_tab(
                 )
 
         with gr.Row():
-            max_new_tokens = gr.Slider(label="Max New Tokens", minimum=100, maximum=4000, value=1200, step=100)
-            temperature = gr.Slider(label="Temperature", minimum=0.1, maximum=1.5, value=0.7, step=0.05)
-            top_p = gr.Slider(label="Top-p", minimum=0.1, maximum=1.0, value=0.9, step=0.05)
+            max_new_tokens = slider_with_manual_override("Max New Tokens", minimum=100, maximum=1048576, value=1200, step=100)
+            temperature = slider_with_manual_override("Temperature", minimum=0.1, maximum=1.5, value=0.7, step=0.05)
+            top_p = slider_with_manual_override("Top-p", minimum=0.1, maximum=1.0, value=0.9, step=0.05)
 
         generate_btn = gr.Button("Generate Speech", variant="primary")
         output_audio = gr.Audio(label="Generated Speech")

@@ -5,7 +5,12 @@ from PIL import Image, ImageDraw, ImageFont
 from core.model_manager import ModelManager
 from core.cache_manager import CacheManager
 from core.hub_client import HubClient
-from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
+from ui.components import (
+    build_compatible_dropdown_choices,
+    is_model_compatible,
+    slider_with_manual_override,
+    update_model_status,
+)
 
 logger = logging.getLogger("ai_agent_loader.ui.object_detection")
 
@@ -64,8 +69,8 @@ def create_object_detection_tab(
             output_image = gr.Image(label="Detections", scale=1)
 
         with gr.Row():
-            threshold = gr.Slider(
-                label="Confidence Threshold",
+            threshold = slider_with_manual_override(
+                "Confidence Threshold",
                 minimum=0.1,
                 maximum=1.0,
                 value=0.5,

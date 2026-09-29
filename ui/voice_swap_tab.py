@@ -5,7 +5,12 @@ import gradio as gr
 from core.cache_manager import CacheManager
 from core.hub_client import HubClient
 from core.model_manager import ModelManager
-from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
+from ui.components import (
+    build_compatible_dropdown_choices,
+    is_model_compatible,
+    slider_with_manual_override,
+    update_model_status,
+)
 
 logger = logging.getLogger("ai_agent_loader.ui.voice_swap")
 
@@ -47,8 +52,8 @@ def create_voice_swap_tab(
                     file_types=["audio"],
                 )
 
-        tau = gr.Slider(
-            label="Conversion Strength (tau)",
+        tau = slider_with_manual_override(
+            "Conversion Strength (tau)",
             minimum=0.0,
             maximum=1.0,
             value=0.3,

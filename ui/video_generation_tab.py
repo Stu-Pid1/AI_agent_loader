@@ -4,7 +4,12 @@ import logging
 from core.model_manager import ModelManager
 from core.cache_manager import CacheManager
 from core.hub_client import HubClient
-from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
+from ui.components import (
+    build_compatible_dropdown_choices,
+    is_model_compatible,
+    slider_with_manual_override,
+    update_model_status,
+)
 
 logger = logging.getLogger("ai_agent_loader.ui.video_generation")
 
@@ -43,23 +48,23 @@ def create_video_generation_tab(
                     lines=2,
                 )
             with gr.Column(scale=1):
-                width = gr.Slider(
-                    label="Width", minimum=256, maximum=1024, value=512, step=64
+                width = slider_with_manual_override(
+                    "Width", minimum=256, maximum=1024, value=512, step=64
                 )
-                height = gr.Slider(
-                    label="Height", minimum=256, maximum=1024, value=512, step=64
+                height = slider_with_manual_override(
+                    "Height", minimum=256, maximum=1024, value=512, step=64
                 )
-                num_frames = gr.Slider(
-                    label="Frames", minimum=8, maximum=64, value=16, step=1
+                num_frames = slider_with_manual_override(
+                    "Frames", minimum=8, maximum=64, value=16, step=1
                 )
-                steps = gr.Slider(
-                    label="Inference Steps", minimum=1, maximum=100, value=25, step=1
+                steps = slider_with_manual_override(
+                    "Inference Steps", minimum=1, maximum=100, value=25, step=1
                 )
-                cfg_scale = gr.Slider(
-                    label="CFG Scale", minimum=1.0, maximum=20.0, value=7.5, step=0.5
+                cfg_scale = slider_with_manual_override(
+                    "CFG Scale", minimum=1.0, maximum=20.0, value=7.5, step=0.5
                 )
-                fps = gr.Slider(
-                    label="FPS", minimum=4, maximum=24, value=8, step=1
+                fps = slider_with_manual_override(
+                    "FPS", minimum=4, maximum=24, value=8, step=1
                 )
                 seed = gr.Number(label="Seed (-1 = random)", value=-1, precision=0)
 

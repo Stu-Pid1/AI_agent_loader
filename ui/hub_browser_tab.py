@@ -9,6 +9,7 @@ from core.hub_client import HubClient
 from core.cache_manager import CacheManager
 from core.model_manager import ModelManager
 from config.settings import Settings
+from ui.components import slider_with_manual_override
 from utils.formatting import format_bytes, format_number
 
 logger = logging.getLogger("ai_agent_loader.ui.hub_browser")
@@ -52,8 +53,8 @@ def create_hub_browser_tab(
                 value="Downloads",
                 scale=1,
             )
-            result_limit = gr.Slider(
-                label="Results",
+            result_limit = slider_with_manual_override(
+                "Results",
                 minimum=5,
                 maximum=Settings.MAX_SEARCH_LIMIT,
                 value=Settings.DEFAULT_SEARCH_LIMIT,

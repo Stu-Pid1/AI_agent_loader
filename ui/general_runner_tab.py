@@ -4,7 +4,12 @@ import logging
 from core.model_manager import ModelManager
 from core.cache_manager import CacheManager
 from core.hub_client import HubClient
-from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
+from ui.components import (
+    build_compatible_dropdown_choices,
+    is_model_compatible,
+    slider_with_manual_override,
+    update_model_status,
+)
 
 logger = logging.getLogger("ai_agent_loader.ui.general_runner")
 
@@ -34,11 +39,11 @@ def create_general_runner_tab(
                     placeholder="Paste a long article or text here...",
                 )
                 with gr.Row():
-                    sum_max_len = gr.Slider(
-                        label="Max Length", minimum=30, maximum=500, value=150, step=10
+                    sum_max_len = slider_with_manual_override(
+                        "Max Length", minimum=30, maximum=500, value=150, step=10
                     )
-                    sum_min_len = gr.Slider(
-                        label="Min Length", minimum=10, maximum=200, value=30, step=10
+                    sum_min_len = slider_with_manual_override(
+                        "Min Length", minimum=10, maximum=200, value=30, step=10
                     )
                 sum_btn = gr.Button("Summarize", variant="primary")
                 sum_output = gr.Textbox(label="Summary", lines=4, interactive=False)

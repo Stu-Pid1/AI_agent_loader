@@ -4,7 +4,12 @@ import logging
 from core.model_manager import ModelManager
 from core.cache_manager import CacheManager
 from core.hub_client import HubClient
-from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
+from ui.components import (
+    build_compatible_dropdown_choices,
+    is_model_compatible,
+    slider_with_manual_override,
+    update_model_status,
+)
 
 logger = logging.getLogger("ai_agent_loader.ui.image_generation")
 
@@ -45,21 +50,21 @@ def create_image_generation_tab(
                     lines=2,
                 )
             with gr.Column(scale=1):
-                width = gr.Slider(
-                    label="Width", minimum=256, maximum=2048, value=1024, step=64
+                width = slider_with_manual_override(
+                    "Width", minimum=256, maximum=2048, value=1024, step=64
                 )
-                height = gr.Slider(
-                    label="Height", minimum=256, maximum=2048, value=1024, step=64
+                height = slider_with_manual_override(
+                    "Height", minimum=256, maximum=2048, value=1024, step=64
                 )
-                steps = gr.Slider(
-                    label="Steps", minimum=1, maximum=100, value=30, step=1
+                steps = slider_with_manual_override(
+                    "Steps", minimum=1, maximum=100, value=30, step=1
                 )
-                cfg_scale = gr.Slider(
-                    label="CFG Scale", minimum=1.0, maximum=20.0, value=7.5, step=0.5
+                cfg_scale = slider_with_manual_override(
+                    "CFG Scale", minimum=1.0, maximum=20.0, value=7.5, step=0.5
                 )
                 seed = gr.Number(label="Seed (-1 = random)", value=-1, precision=0)
-                num_images = gr.Slider(
-                    label="Number of Images", minimum=1, maximum=4, value=1, step=1
+                num_images = slider_with_manual_override(
+                    "Number of Images", minimum=1, maximum=4, value=1, step=1
                 )
 
         generate_btn = gr.Button("Generate", variant="primary")

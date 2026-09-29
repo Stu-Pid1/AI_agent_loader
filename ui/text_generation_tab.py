@@ -4,7 +4,12 @@ import logging
 from core.model_manager import ModelManager
 from core.cache_manager import CacheManager
 from core.hub_client import HubClient
-from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
+from ui.components import (
+    build_compatible_dropdown_choices,
+    is_model_compatible,
+    slider_with_manual_override,
+    update_model_status,
+)
 
 logger = logging.getLogger("ai_agent_loader.ui.text_generation")
 
@@ -45,40 +50,20 @@ def create_text_generation_tab(
                     lines=5,
                 )
             with gr.Column(scale=1):
-                max_tokens = gr.Slider(
-                    label="Max Tokens",
-                    minimum=32,
-                    maximum=4096,
-                    value=512,
-                    step=32,
+                max_tokens = slider_with_manual_override(
+                    "Max Tokens", minimum=32, maximum=1048576, value=512, step=32
                 )
-                temperature = gr.Slider(
-                    label="Temperature",
-                    minimum=0.0,
-                    maximum=2.0,
-                    value=0.7,
-                    step=0.05,
+                temperature = slider_with_manual_override(
+                    "Temperature", minimum=0.0, maximum=2.0, value=0.7, step=0.05
                 )
-                top_p = gr.Slider(
-                    label="Top-p",
-                    minimum=0.0,
-                    maximum=1.0,
-                    value=0.9,
-                    step=0.05,
+                top_p = slider_with_manual_override(
+                    "Top-p", minimum=0.0, maximum=1.0, value=0.9, step=0.05
                 )
-                top_k = gr.Slider(
-                    label="Top-k",
-                    minimum=1,
-                    maximum=200,
-                    value=50,
-                    step=1,
+                top_k = slider_with_manual_override(
+                    "Top-k", minimum=1, maximum=200, value=50, step=1
                 )
-                rep_penalty = gr.Slider(
-                    label="Repetition Penalty",
-                    minimum=1.0,
-                    maximum=2.0,
-                    value=1.1,
-                    step=0.05,
+                rep_penalty = slider_with_manual_override(
+                    "Repetition Penalty", minimum=1.0, maximum=2.0, value=1.1, step=0.05
                 )
 
         with gr.Row():

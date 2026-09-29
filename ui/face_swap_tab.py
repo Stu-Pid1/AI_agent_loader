@@ -12,7 +12,12 @@ from core.cache_manager import CacheManager
 from core.hub_client import HubClient
 from core.model_manager import ModelManager
 from runners.face_swap import DEFAULT_PROMPT, FaceSwapRunner
-from ui.components import build_compatible_dropdown_choices, is_model_compatible, update_model_status
+from ui.components import (
+    build_compatible_dropdown_choices,
+    is_model_compatible,
+    slider_with_manual_override,
+    update_model_status,
+)
 
 logger = logging.getLogger("ai_agent_loader.ui.face_swap")
 
@@ -144,7 +149,7 @@ def create_face_swap_tab(
         with gr.Row():
             with gr.Column(scale=1):
                 video_input = gr.Video(label="Source Video")
-                frame_time = gr.Slider(label="Preview Frame (seconds)", minimum=0, maximum=120, value=0, step=0.5)
+                frame_time = slider_with_manual_override("Preview Frame (seconds)", minimum=0, maximum=120, value=0, step=0.5)
                 detect_btn = gr.Button("Detect Faces in Frame")
             with gr.Column(scale=1):
                 face_preview = gr.Image(label="Detected Faces", interactive=False)
@@ -159,13 +164,13 @@ def create_face_swap_tab(
         gr.Markdown("### 3. Choose what to process")
         with gr.Row():
             start_time = gr.Number(label="Start Time (s)", value=0, precision=1)
-            duration = gr.Slider(label="Duration to Process (s)", minimum=0.5, maximum=15, value=3, step=0.5)
-            frame_stride = gr.Slider(label="Process Every Nth Frame", minimum=1, maximum=15, value=5, step=1)
-            output_fps = gr.Slider(label="Output FPS", minimum=1, maximum=24, value=6, step=1)
+            duration = slider_with_manual_override("Duration to Process (s)", minimum=0.5, maximum=15, value=3, step=0.5)
+            frame_stride = slider_with_manual_override("Process Every Nth Frame", minimum=1, maximum=15, value=5, step=1)
+            output_fps = slider_with_manual_override("Output FPS", minimum=1, maximum=24, value=6, step=1)
 
         with gr.Row():
-            steps = gr.Slider(label="Inference Steps", minimum=4, maximum=50, value=28, step=1)
-            guidance = gr.Slider(label="Guidance Scale", minimum=1.0, maximum=6.0, value=1.0, step=0.5)
+            steps = slider_with_manual_override("Inference Steps", minimum=4, maximum=50, value=28, step=1)
+            guidance = slider_with_manual_override("Guidance Scale", minimum=1.0, maximum=6.0, value=1.0, step=0.5)
 
         process_btn = gr.Button("Process Video", variant="primary")
         output_video = gr.Video(label="Face-Swapped Output")
