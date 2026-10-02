@@ -8,6 +8,7 @@ from core.model_manager import ModelManager
 from ui.hub_browser_tab import create_hub_browser_tab
 from ui.text_generation_tab import create_text_generation_tab
 from ui.chat_tab import create_chat_tab
+from ui.agent_tools_tab import create_agent_tools_tab
 from ui.api_info_tab import create_api_info_tab
 from ui.image_generation_tab import create_image_generation_tab
 from ui.video_generation_tab import create_video_generation_tab
@@ -42,6 +43,7 @@ def build_app() -> tuple:
         create_download_queue_tab(download_queue_state, cache_manager, hub_client)
         dropdowns = create_text_generation_tab(model_manager, cache_manager, hub_client)
         dropdowns += create_chat_tab(model_manager, cache_manager, hub_client)
+        dropdowns += create_agent_tools_tab(model_manager, cache_manager, hub_client)
         dropdowns += create_image_generation_tab(model_manager, cache_manager, hub_client)
         dropdowns += create_video_generation_tab(model_manager, cache_manager, hub_client)
         dropdowns += create_face_swap_tab(model_manager, cache_manager, hub_client)
@@ -59,6 +61,7 @@ def build_app() -> tuple:
         def refresh_all_dropdowns():
             cached = cache_manager.get_cached_model_ids()
             allowed_groups = [
+                {"text-generation", "text2text-generation", "image-text-to-text", "video-text-to-text", "audio-text-to-text", "document-question-answering", "visual-question-answering"},
                 {"text-generation", "text2text-generation", "image-text-to-text", "video-text-to-text", "audio-text-to-text", "document-question-answering", "visual-question-answering"},
                 {"text-generation", "text2text-generation", "image-text-to-text", "video-text-to-text", "audio-text-to-text", "document-question-answering", "visual-question-answering"},
                 {"text-to-image"},

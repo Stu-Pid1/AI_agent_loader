@@ -4,6 +4,9 @@ user_settings.json
 # Saved chat conversations (personal data)
 conversations/
 
+# Security Agent scope list (may name client engagements/targets)
+agent_scope.json
+
 # Environment variables
 .env
 

@@ -5,6 +5,7 @@ from pathlib import Path
 import gradio as gr
 
 from config.settings import Settings
+from utils.gguf import group_gguf_variants
 
 
 def create_download_queue_tab(download_queue_state, cache_manager, hub_client):
@@ -42,6 +43,27 @@ def create_download_queue_tab(download_queue_state, cache_manager, hub_client):
             interactive=False,
             label="Downloaded Models",
         )
+
+        with gr.Accordion("Clean Up Extra GGUF Quantizations", open=False):
+            gr.Markdown(
+                "Models downloaded before the Hub Browser let you pick a single quantization "
+                "may have multiple `.gguf` variants sitting on disk unused. Pick a model, keep "
+                "the one you actually use, and delete the rest to reclaim space."
+            )
+            with gr.Row():
+                gguf_cleanup_model = gr.Dropdown(label="Model", choices=[], interactive=True, scale=3)
+                gguf_cleanup_refresh_btn = gr.Button("Refresh", scale=1)
+            gguf_cleanup_table = gr.Dataframe(
+                headers=["Quantization", "Size", "Files"],
+                datatype=["str", "str", "str"],
+                interactive=False,
+                label="Local Quantizations",
+            )
+            with gr.Row():
+                gguf_cleanup_keep = gr.Dropdown(label="Keep this quantization", choices=[], interactive=True, scale=3)
+                gguf_cleanup_delete_btn = gr.Button("Delete All Others", variant="stop", scale=1)
+            gguf_cleanup_status = gr.Markdown("")
+            gguf_cleanup_variants_state = gr.State([])
 
         queue_status = gr.Markdown("")
         queue_progress_display = gr.HTML("<div style='min-height: 44px;'>No active downloads.</div>")
@@ -189,6 +211,71 @@ def create_download_queue_tab(download_queue_state, cache_manager, hub_client):
                 ])
             return rows
 
+        def _models_with_multiple_gguf_variants():
+            choices = []
+            for model in cache_manager.get_cached_models():
+                variants = group_gguf_variants(cache_manager.list_local_file_sizes(model.model_id))
+                if len(variants) > 1:
+                    choices.append(model.model_id)
+            return choices
+
+        def refresh_gguf_cleanup_models():
+            return gr.update(choices=_models_with_multiple_gguf_variants(), value=None)
+
+        def on_gguf_cleanup_model_select(model_id):
+            if not model_id:
+                return [], gr.update(choices=[], value=None), "", []
+            variants = group_gguf_variants(cache_manager.list_local_file_sizes(model_id))
+            if len(variants) <= 1:
+                return (
+                    [],
+                    gr.update(choices=[], value=None),
+                    "**This model only has one local quantization — nothing to clean up.**",
+                    [],
+                )
+            rows = [[v.label, format_bytes(v.size_bytes), str(len(v.files))] for v in variants]
+            keep_choices = [v.label for v in variants]
+            return rows, gr.update(choices=keep_choices, value=keep_choices[0]), "", variants
+
+        def do_gguf_cleanup_delete(model_id, keep_label, variants):
+            if not model_id or not variants:
+                return (
+                    [],
+                    gr.update(choices=[], value=None),
+                    "**Select a model first.**",
+                    list_downloaded_models(),
+                    gr.update(choices=_models_with_multiple_gguf_variants(), value=None),
+                    [],
+                )
+            if not keep_label:
+                rows = [[v.label, format_bytes(v.size_bytes), str(len(v.files))] for v in variants]
+                return (
+                    rows,
+                    gr.update(),
+                    "**Pick which quantization to keep first.**",
+                    list_downloaded_models(),
+                    gr.update(choices=_models_with_multiple_gguf_variants()),
+                    variants,
+                )
+
+            to_delete = [v for v in variants if v.label != keep_label]
+            freed = 0
+            for variant in to_delete:
+                freed += cache_manager.delete_model_files(model_id, variant.files)
+
+            remaining = group_gguf_variants(cache_manager.list_local_file_sizes(model_id))
+            rows = [[v.label, format_bytes(v.size_bytes), str(len(v.files))] for v in remaining]
+            keep_choices = [v.label for v in remaining]
+            status = f"**Freed {format_bytes(freed)}** — kept `{keep_label}`, removed {len(to_delete)} other variant(s)."
+            return (
+                rows,
+                gr.update(choices=keep_choices, value=keep_label if keep_label in keep_choices else None),
+                status,
+                list_downloaded_models(),
+                gr.update(choices=_models_with_multiple_gguf_variants()),
+                remaining,
+            )
+
         def refresh_queue(queue_items):
             rows = format_queue_rows(queue_items)
             display = render_queue_display(queue_items)
@@ -265,4 +352,28 @@ def create_download_queue_tab(download_queue_state, cache_manager, hub_client):
             fn=tick_queue,
             inputs=[download_queue_state],
             outputs=[queue_table, queue_progress_display, queue_status],
+        )
+
+        gguf_cleanup_refresh_btn.click(
+            fn=refresh_gguf_cleanup_models,
+            outputs=[gguf_cleanup_model],
+        )
+
+        gguf_cleanup_model.change(
+            fn=on_gguf_cleanup_model_select,
+            inputs=[gguf_cleanup_model],
+            outputs=[gguf_cleanup_table, gguf_cleanup_keep, gguf_cleanup_status, gguf_cleanup_variants_state],
+        )
+
+        gguf_cleanup_delete_btn.click(
+            fn=do_gguf_cleanup_delete,
+            inputs=[gguf_cleanup_model, gguf_cleanup_keep, gguf_cleanup_variants_state],
+            outputs=[
+                gguf_cleanup_table,
+                gguf_cleanup_keep,
+                gguf_cleanup_status,
+                downloaded_table,
+                gguf_cleanup_model,
+                gguf_cleanup_variants_state,
+            ],
         )

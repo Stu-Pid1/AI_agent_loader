@@ -42,6 +42,7 @@ class GGUFTextGenerationRunner(BaseRunner):
     def __init__(self, device: str = "cuda"):
         super().__init__(device)
         self._llm = None
+        self._n_ctx = None
 
     @staticmethod
     def get_info() -> RunnerInfo:
@@ -113,7 +114,7 @@ class GGUFTextGenerationRunner(BaseRunner):
             logger.info(f"Loading local GGUF file: {model_path}")
 
             n_gpu_layers = -1 if self._device == "cuda" else 0
-            n_ctx = kwargs.get("n_ctx", 4096)
+            n_ctx = int(kwargs.get("n_ctx") or 4096)
 
             self._llm = Llama(
                 model_path=model_path,
@@ -122,8 +123,9 @@ class GGUFTextGenerationRunner(BaseRunner):
                 verbose=False,
             )
             self._model_id = model_id
+            self._n_ctx = n_ctx
             self._status = RunnerStatus.READY
-            logger.info(f"Loaded GGUF model: {model_id} ({gguf_file})")
+            logger.info(f"Loaded GGUF model: {model_id} ({gguf_file}), n_ctx={n_ctx}")
 
         except Exception as e:
             self._status = RunnerStatus.ERROR
@@ -141,13 +143,20 @@ class GGUFTextGenerationRunner(BaseRunner):
             params = {**self.get_default_parameters(), **kwargs}
             start_time = time.time()
 
-            # Chat format
-            if isinstance(inputs, list) and all(
+            is_chat = isinstance(inputs, list) and all(
                 isinstance(m, dict) and "role" in m for m in inputs
-            ):
+            )
+            prompt_text = (
+                "\n".join(str(m.get("content", "")) for m in inputs) if is_chat else str(inputs)
+            )
+            requested_tokens = int(params["max_new_tokens"])
+            max_tokens, clamped = self._fit_to_context(prompt_text, requested_tokens)
+
+            # Chat format
+            if is_chat:
                 response = self._llm.create_chat_completion(
                     messages=inputs,
-                    max_tokens=int(params["max_new_tokens"]),
+                    max_tokens=max_tokens,
                     temperature=params["temperature"],
                     top_p=params["top_p"],
                     top_k=int(params["top_k"]),
@@ -156,10 +165,9 @@ class GGUFTextGenerationRunner(BaseRunner):
                 text = response["choices"][0]["message"]["content"]
             else:
                 # Completion format
-                prompt = inputs if isinstance(inputs, str) else str(inputs)
                 response = self._llm(
-                    prompt,
-                    max_tokens=int(params["max_new_tokens"]),
+                    prompt_text,
+                    max_tokens=max_tokens,
                     temperature=params["temperature"],
                     top_p=params["top_p"],
                     top_k=int(params["top_k"]),
@@ -169,25 +177,62 @@ class GGUFTextGenerationRunner(BaseRunner):
 
             elapsed = time.time() - start_time
 
+            metadata = {
+                "duration_seconds": round(elapsed, 2),
+                "model_id": self._model_id,
+                "backend": "llama-cpp-python",
+                "n_ctx": self._n_ctx,
+                "max_tokens_used": max_tokens,
+            }
+            if clamped:
+                metadata["clamped_note"] = (
+                    f"Requested {requested_tokens} tokens, but only {max_tokens} fit in the "
+                    f"{self._n_ctx}-token context window alongside the current prompt — "
+                    f"increase Context Window (n_ctx) when loading the model for more room."
+                )
+
             self._status = RunnerStatus.READY
             return RunResult(
                 success=True,
                 output=text.strip(),
-                metadata={
-                    "duration_seconds": round(elapsed, 2),
-                    "model_id": self._model_id,
-                    "backend": "llama-cpp-python",
-                },
+                metadata=metadata,
             )
 
         except Exception as e:
             self._status = RunnerStatus.READY
-            return RunResult(success=False, output=None, error=str(e))
+            msg = str(e)
+            if "exceed context window" in msg.lower():
+                msg += (
+                    f" — the prompt itself is longer than the {self._n_ctx}-token context "
+                    f"window. Increase Context Window (n_ctx) when loading the model, or "
+                    f"shorten the conversation/system prompt."
+                )
+            return RunResult(success=False, output=None, error=msg)
+
+    def _fit_to_context(self, prompt_text: str, requested_tokens: int) -> "tuple[int, bool]":
+        """Clamps max_tokens so prompt + generation can't exceed n_ctx.
+
+        Without this, requesting more tokens than actually fit (easy to do
+        now that the Max Tokens slider has no artificial ceiling) crashes
+        with a raw llama.cpp "exceed context window" error instead of just
+        generating as much as will fit.
+        """
+        available = self._n_ctx or 4096
+        try:
+            prompt_tokens = len(self._llm.tokenize(prompt_text.encode("utf-8")))
+        except Exception:
+            prompt_tokens = 0
+
+        safety_margin = 64
+        max_allowed = max(16, available - prompt_tokens - safety_margin)
+        max_tokens = min(requested_tokens, max_allowed)
+        return max_tokens, max_tokens < requested_tokens
 
     def unload(self) -> None:
         if self._llm is not None:
             del self._llm
             self._llm = None
+        self._n_ctx = None
         super().unload()
 
     def get_default_parameters(self) -> Dict[str, Any]:

@@ -59,7 +59,7 @@ def create_orpheus_tts_tab(
                 )
 
         with gr.Row():
-            max_new_tokens = slider_with_manual_override("Max New Tokens", minimum=100, maximum=1048576, value=1200, step=100)
+            max_new_tokens = slider_with_manual_override("Max New Tokens", minimum=100, maximum=8192, value=1200, step=100)
             temperature = slider_with_manual_override("Temperature", minimum=0.1, maximum=1.5, value=0.7, step=0.05)
             top_p = slider_with_manual_override("Top-p", minimum=0.1, maximum=1.0, value=0.9, step=0.05)
 

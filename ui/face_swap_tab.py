@@ -1,4 +1,5 @@
 import logging
+import random
 import tempfile
 import uuid
 from pathlib import Path
@@ -171,6 +172,13 @@ def create_face_swap_tab(
         with gr.Row():
             steps = slider_with_manual_override("Inference Steps", minimum=4, maximum=50, value=28, step=1)
             guidance = slider_with_manual_override("Guidance Scale", minimum=1.0, maximum=6.0, value=1.0, step=0.5)
+            seed = gr.Number(
+                label="Seed (kept fixed across every frame — this is what stops the face from "
+                "drifting/changing between frames)",
+                value=42,
+                precision=0,
+            )
+            randomize_seed_btn = gr.Button("🎲 Randomize", scale=0)
 
         process_btn = gr.Button("Process Video", variant="primary")
         output_video = gr.Video(label="Face-Swapped Output")
@@ -236,7 +244,7 @@ def create_face_swap_tab(
 
         def process_video(
             video_path, face_ref_img, faces, frame_wh, face_label,
-            start_s, dur_s, stride, out_fps, num_steps, cfg, prompt_text, invert_order,
+            start_s, dur_s, stride, out_fps, num_steps, cfg, prompt_text, invert_order, seed_value,
             progress: gr.Progress = gr.Progress(),
         ):
             if not model_manager.active_model_id:
@@ -291,6 +299,7 @@ def create_face_swap_tab(
                         guidance_scale=float(cfg),
                         prompt=prompt_text,
                         swap_image_order=bool(invert_order),
+                        seed=int(seed_value) if seed_value is not None else None,
                     )
                     if not result.success:
                         errors += 1
@@ -331,10 +340,15 @@ def create_face_swap_tab(
             inputs=[
                 video_input, face_reference, faces_state, frame_size_state, face_choice,
                 start_time, duration, frame_stride, output_fps, steps, guidance,
-                prompt_box, swap_order,
+                prompt_box, swap_order, seed,
             ],
             outputs=[output_video, output_meta],
             concurrency_id="model_ops",
         )
+
+        def randomize_seed():
+            return gr.update(value=random.randint(0, 2_147_483_647))
+
+        randomize_seed_btn.click(fn=randomize_seed, outputs=[seed])
 
         return [model_selector]

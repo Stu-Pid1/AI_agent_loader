@@ -242,6 +242,59 @@ class CacheManager:
             logger.debug(f"Could not list local files for {model_id}: {e}")
             return []
 
+    def list_local_file_sizes(self, model_id: str) -> List[Dict]:
+        """Relative POSIX path + size (bytes) for every file in a cached
+        model's snapshot — follows symlinks so sizes reflect the real blob."""
+        local_path = self.resolve_local_model_path(model_id)
+        if not local_path:
+            return []
+        root = Path(local_path)
+        results = []
+        try:
+            for p in root.rglob("*"):
+                if not p.is_file():
+                    continue
+                try:
+                    size = p.stat().st_size
+                except OSError:
+                    size = 0
+                results.append({"filename": str(p.relative_to(root).as_posix()), "size": size})
+            return sorted(results, key=lambda e: e["filename"])
+        except Exception as e:
+            logger.debug(f"Could not list local file sizes for {model_id}: {e}")
+            return []
+
+    def delete_model_files(self, model_id: str, filenames: List[str]) -> int:
+        """Deletes specific files from a cached model's local snapshot,
+        freeing the underlying blob too if the file is a HF-cache symlink.
+        Returns the number of bytes freed."""
+        local_path = self.resolve_local_model_path(model_id)
+        if not local_path:
+            return 0
+        root = Path(local_path)
+        freed = 0
+        for rel in filenames:
+            file_path = root / rel
+            if not file_path.exists() and not file_path.is_symlink():
+                continue
+            try:
+                is_link = file_path.is_symlink()
+                blob_target = file_path.resolve() if is_link else None
+                size = file_path.stat().st_size if not is_link else (
+                    blob_target.stat().st_size if blob_target and blob_target.exists() else 0
+                )
+                file_path.unlink()
+                if blob_target and blob_target.exists() and "blobs" in blob_target.parts:
+                    try:
+                        blob_target.unlink()
+                    except OSError:
+                        pass
+                freed += size
+                logger.info(f"Deleted {rel} for {model_id} ({size} bytes)")
+            except OSError as e:
+                logger.warning(f"Could not delete {file_path}: {e}")
+        return freed
+
     def get_cached_model_ids_by_tag(
         self, pipeline_tags: List[str]
     ) -> List[str]:

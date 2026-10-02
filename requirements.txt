@@ -42,6 +42,11 @@ snac>=1.2.0
 # plain Text to Speech tab (only architectures like SpeechT5 use this)
 speechbrain>=1.0.0
 
+# Security Agent tab — recon tools (nmap/nikto/nuclei are external binaries,
+# detected at runtime rather than bundled)
+requests>=2.31.0
+dnspython>=2.6.0
+
 # Image processing
 Pillow>=10.0.0
 

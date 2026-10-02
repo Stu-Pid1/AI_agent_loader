@@ -161,12 +161,24 @@ class FaceSwapRunner(BaseRunner):
             prompt = params["prompt"] or DEFAULT_PROMPT
             images = [scene_image, face_image] if params["swap_image_order"] else [face_image, scene_image]
 
+            generator = None
+            seed = params.get("seed")
+            if seed is not None:
+                # A fixed seed is what keeps the swapped face's identity/fine
+                # details stable across frames of a video — without it, every
+                # call samples fresh random noise and the diffusion model
+                # regenerates visibly different facial details each time,
+                # even with the exact same reference face image.
+                gen_device = "cuda" if self._device == "cuda" else "cpu"
+                generator = torch.Generator(device=gen_device).manual_seed(int(seed))
+
             start_time = time.time()
             result = self._pipeline(
                 image=images,
                 prompt=prompt,
                 num_inference_steps=int(params["num_inference_steps"]),
                 guidance_scale=float(params["guidance_scale"]),
+                generator=generator,
             )
             elapsed = time.time() - start_time
 
@@ -198,6 +210,7 @@ class FaceSwapRunner(BaseRunner):
             "guidance_scale": 1.0,
             "prompt": DEFAULT_PROMPT,
             "swap_image_order": False,
+            "seed": None,
         }
 
     def validate_model(self, model_id: str) -> bool:

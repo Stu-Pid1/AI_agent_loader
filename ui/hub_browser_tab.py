@@ -11,6 +11,7 @@ from core.model_manager import ModelManager
 from config.settings import Settings
 from ui.components import slider_with_manual_override
 from utils.formatting import format_bytes, format_number
+from utils.gguf import ALL_VARIANTS_LABEL, group_gguf_variants, pick_default_variant
 
 logger = logging.getLogger("ai_agent_loader.ui.hub_browser")
 
@@ -65,6 +66,7 @@ def create_hub_browser_tab(
         # --- State ---
         search_results_state = gr.State([])
         selected_model_state = gr.State(None)
+        gguf_variants_state = gr.State([])
 
         # --- Results Layout ---
         with gr.Row(equal_height=False):
@@ -77,6 +79,13 @@ def create_hub_browser_tab(
                     wrap=True,
                 )
             with gr.Column(scale=1):
+                quant_selector = gr.Dropdown(
+                    label="Quantization to Download",
+                    choices=[],
+                    value=None,
+                    interactive=True,
+                    visible=False,
+                )
                 quick_download_btn = gr.Button("Quick Download", variant="primary", interactive=False)
                 quick_load_btn = gr.Button("Load & Run", variant="secondary", interactive=False)
                 quick_save_dir = gr.Textbox(
@@ -178,6 +187,14 @@ def create_hub_browser_tab(
                 gr.Warning(f"Search failed: {e}")
                 return pd.DataFrame(), []
 
+        def _quant_dropdown_choices(variants):
+            choices = [
+                (f"{v.label} — {format_bytes(v.size_bytes)}", v.label) for v in variants
+            ]
+            total = sum(v.size_bytes for v in variants)
+            choices.append((f"All quantizations — {format_bytes(total)} total", ALL_VARIANTS_LABEL))
+            return choices
+
         def on_row_select(results, evt: gr.SelectData):
             if not results or evt.index[0] >= len(results):
                 return (
@@ -190,6 +207,8 @@ def create_hub_browser_tab(
                     "",
                     gr.update(interactive=False),
                     gr.update(interactive=False),
+                    gr.update(choices=[], value=None, visible=False),
+                    [],
                 )
 
             selected = results[evt.index[0]]
@@ -198,6 +217,7 @@ def create_hub_browser_tab(
             try:
                 detail = hub_client.get_model_detail(model_id)
                 is_cached = cache_manager.is_model_cached(model_id)
+                variants = group_gguf_variants(detail.siblings)
 
                 header = (
                     f"### {model_id}\n\n"
@@ -220,12 +240,27 @@ def create_hub_browser_tab(
                 total = format_bytes(detail.total_size_bytes) if detail.total_size_bytes else "Unknown"
                 files_text += f"\n**Total size:** {total}"
 
+                if variants:
+                    files_text += (
+                        f"\n\n**{len(variants)} GGUF quantization(s) available** — pick one in "
+                        f"'Quantization to Download' to only fetch that version."
+                    )
+
                 if is_cached:
                     cached_size = cache_manager.get_model_cache_size(model_id)
                     files_text += f"\n\n**Cached locally** ({format_bytes(cached_size)})"
 
                 card = hub_client.get_model_card(model_id)
                 status_text = "Already downloaded" if is_cached else "Ready to download"
+
+                if variants:
+                    quant_update = gr.update(
+                        choices=_quant_dropdown_choices(variants),
+                        value=pick_default_variant(variants),
+                        visible=True,
+                    )
+                else:
+                    quant_update = gr.update(choices=[], value=None, visible=False)
 
                 return (
                     header,
@@ -237,6 +272,8 @@ def create_hub_browser_tab(
                     status_text,
                     gr.update(interactive=True),
                     gr.update(interactive=is_cached),
+                    quant_update,
+                    variants,
                 )
 
             except Exception as e:
@@ -251,21 +288,35 @@ def create_hub_browser_tab(
                     f"Error: {e}",
                     gr.update(interactive=False),
                     gr.update(interactive=False),
+                    gr.update(choices=[], value=None, visible=False),
+                    [],
                 )
 
-        def do_download(model_id, queue_items, save_path, progress: gr.Progress = gr.Progress(track_tqdm=True)):
+        def do_download(
+            model_id, queue_items, save_path, quant_choice, variants,
+            progress: gr.Progress = gr.Progress(track_tqdm=True),
+        ):
             if not model_id:
                 return "No model selected.", "", gr.update(interactive=False), queue_items
 
+            allow_patterns = None
+            selected_size = 0
+            if variants and quant_choice and quant_choice != ALL_VARIANTS_LABEL:
+                match = next((v for v in variants if v.label == quant_choice), None)
+                if match:
+                    allow_patterns = list(match.files)
+                    selected_size = match.size_bytes
+
             target_dir = (save_path or "").strip() or str(Settings.DEFAULT_CACHE_DIR)
             queue = list(queue_items or [])
+            total_bytes = selected_size or (hub_client.get_model_detail(model_id).total_size_bytes or 0)
             item_found = False
             for item in queue:
                 if item.get("model_id") == model_id:
                     item["status"] = "downloading"
                     item["save_path"] = target_dir
                     item["started_at"] = time.time()
-                    item["total_bytes"] = hub_client.get_model_detail(model_id).total_size_bytes or 0
+                    item["total_bytes"] = total_bytes
                     item_found = True
                     break
             if not item_found:
@@ -274,24 +325,25 @@ def create_hub_browser_tab(
                     "status": "downloading",
                     "save_path": target_dir,
                     "started_at": time.time(),
-                    "total_bytes": (hub_client.get_model_detail(model_id).total_size_bytes or 0),
+                    "total_bytes": total_bytes,
                     "progress": 0,
                     "eta_seconds": 0,
                     "remaining_bytes": 0,
                 })
 
+            quant_note = f" ({quant_choice})" if allow_patterns else ""
             yield (
-                f"Queued {model_id}...",
-                f"Queued {model_id} to {target_dir}.",
+                f"Queued {model_id}{quant_note}...",
+                f"Queued {model_id}{quant_note} to {target_dir}.",
                 gr.update(interactive=False),
                 queue,
             )
 
             try:
-                progress(5, desc=f"Downloading {model_id}...")
+                progress(5, desc=f"Downloading {model_id}{quant_note}...")
                 new_path = Settings.set_download_dir(target_dir)
                 cache_manager._cache_dir = Path(new_path)
-                hub_client.download_model(model_id, cache_dir=str(new_path))
+                hub_client.download_model(model_id, cache_dir=str(new_path), allow_patterns=allow_patterns)
                 for item in queue:
                     if item.get("model_id") == model_id:
                         item["status"] = "completed"
@@ -301,8 +353,8 @@ def create_hub_browser_tab(
                         item["remaining_bytes"] = 0
                         break
                 yield (
-                    f"Downloaded {model_id} successfully!",
-                    f"Downloaded {model_id} to {new_path}.",
+                    f"Downloaded {model_id}{quant_note} successfully!",
+                    f"Downloaded {model_id}{quant_note} to {new_path}.",
                     gr.update(interactive=True),
                     queue,
                 )
@@ -363,19 +415,21 @@ def create_hub_browser_tab(
                 download_status,
                 quick_download_btn,
                 quick_load_btn,
+                quant_selector,
+                gguf_variants_state,
             ],
         )
 
         download_btn.click(
             fn=do_download,
-            inputs=[selected_model_state, download_queue_state, quick_save_dir],
+            inputs=[selected_model_state, download_queue_state, quick_save_dir, quant_selector, gguf_variants_state],
             outputs=[download_status, quick_status, load_btn, download_queue_state],
             concurrency_id="model_ops",
         )
 
         quick_download_btn.click(
             fn=do_download,
-            inputs=[selected_model_state, download_queue_state, quick_save_dir],
+            inputs=[selected_model_state, download_queue_state, quick_save_dir, quant_selector, gguf_variants_state],
             outputs=[quick_status, download_status, load_btn, download_queue_state],
             concurrency_id="model_ops",
         )

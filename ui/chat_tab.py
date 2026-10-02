@@ -60,6 +60,11 @@ def create_chat_tab(
         status_bar = gr.Markdown("**Status:** No model loaded")
 
         with gr.Row():
+            n_ctx = slider_with_manual_override(
+                "Context Window (n_ctx) — GGUF models only", minimum=512, maximum=32768, value=4096, step=512
+            )
+
+        with gr.Row():
             with gr.Column(scale=1):
                 gr.Markdown("### Conversations")
                 conversation_list = gr.Dropdown(
@@ -86,7 +91,7 @@ def create_chat_tab(
                     )
 
                 with gr.Accordion("Generation Parameters", open=False):
-                    max_tokens = slider_with_manual_override("Max Tokens", minimum=32, maximum=1048576, value=512, step=32)
+                    max_tokens = slider_with_manual_override("Max Tokens", minimum=32, maximum=8192, value=512, step=32)
                     temperature = slider_with_manual_override("Temperature", minimum=0.0, maximum=2.0, value=0.7, step=0.05)
                     top_p = slider_with_manual_override("Top-p", minimum=0.0, maximum=1.0, value=0.9, step=0.05)
                     top_k = slider_with_manual_override("Top-k", minimum=1, maximum=200, value=50, step=1)
@@ -115,7 +120,7 @@ def create_chat_tab(
             choices = build_compatible_dropdown_choices(cached, _CHAT_TAGS, cache_manager)
             return gr.update(choices=choices, value=None)
 
-        def load_model(model_id, progress: gr.Progress = gr.Progress(track_tqdm=True)):
+        def load_model(model_id, ctx_size, progress: gr.Progress = gr.Progress(track_tqdm=True)):
             if not model_id:
                 return "**Status:** No model selected."
             if not is_model_compatible(model_id, _CHAT_TAGS, cache_manager):
@@ -123,7 +128,7 @@ def create_chat_tab(
             try:
                 progress(0, desc=f"Loading {model_id}...")
                 tag = cache_manager.get_local_model_metadata(model_id).pipeline_tag or "text-generation"
-                model_manager.load_model(model_id, tag)
+                model_manager.load_model(model_id, tag, n_ctx=int(ctx_size))
                 return update_model_status(model_manager)
             except Exception as e:
                 return f"**Status:** Load failed — {e}"
@@ -230,7 +235,7 @@ def create_chat_tab(
 
         # --- Wire events ---
         refresh_btn.click(fn=refresh_models, outputs=[model_selector])
-        load_btn.click(fn=load_model, inputs=[model_selector], outputs=[status_bar], concurrency_id="model_ops")
+        load_btn.click(fn=load_model, inputs=[model_selector, n_ctx], outputs=[status_bar], concurrency_id="model_ops")
         unload_btn.click(fn=unload_model, outputs=[status_bar], concurrency_id="model_ops")
 
         gen_inputs = [history_state, system_prompt, max_tokens, temperature, top_p, top_k, rep_penalty]
